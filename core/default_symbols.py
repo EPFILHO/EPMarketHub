@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from .models import SymbolDefinition
 
-
 DEFAULT_SYMBOLS: list[SymbolDefinition] = [
     SymbolDefinition("eurusd", "Euro/Dólar", "Forex", ["EURUSD", "EURUSDm", "EURUSD.pro", "EURUSD*"], ["usd_strength"]),
     SymbolDefinition("gbpusd", "Libra/Dólar", "Forex", ["GBPUSD", "GBPUSDm", "GBPUSD.pro", "GBPUSD*"], ["usd_strength"]),

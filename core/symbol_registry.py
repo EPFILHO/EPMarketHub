@@ -1,7 +1,7 @@
 from __future__ import annotations
 
+from collections.abc import Iterable
 from pathlib import Path
-from typing import Iterable
 
 from .json_store import load_json, save_json_atomic
 from .models import SymbolDefinition

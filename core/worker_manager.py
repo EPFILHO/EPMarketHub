@@ -3,9 +3,10 @@ from __future__ import annotations
 import logging
 import multiprocessing as mp
 import queue
+from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any
 
 from .models import SymbolDefinition, TerminalProfile
 from .mt5_worker import mt5_worker_main

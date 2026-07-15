@@ -251,7 +251,11 @@ class MT5Connector:
             return []
         result: list[dict[str, Any]] = []
         for row in rates:
-            item = dict(zip(row.dtype.names, row.tolist())) if hasattr(row, "dtype") else dict(row)
+            item = (
+                dict(zip(row.dtype.names, row.tolist(), strict=True))
+                if hasattr(row, "dtype")
+                else dict(row)
+            )
             if "time" in item:
                 item["time_iso"] = datetime.fromtimestamp(item["time"]).isoformat(timespec="seconds")
             result.append(item)

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
-from typing import Any, Optional
+from typing import Any
 
 
 @dataclass
@@ -28,7 +28,7 @@ class TerminalProfile:
     updated_at: str = field(default_factory=lambda: datetime.now().isoformat(timespec="seconds"))
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "TerminalProfile":
+    def from_dict(cls, data: dict[str, Any]) -> TerminalProfile:
         allowed = {f.name for f in cls.__dataclass_fields__.values()}
         clean = {k: v for k, v in data.items() if k in allowed}
         return cls(**clean)
@@ -53,7 +53,7 @@ class SymbolDefinition:
     enabled: bool = True
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "SymbolDefinition":
+    def from_dict(cls, data: dict[str, Any]) -> SymbolDefinition:
         return cls(
             id=str(data.get("id", "")).strip(),
             name=str(data.get("name", "")).strip(),
@@ -72,12 +72,12 @@ class TerminalConnectionStatus:
     terminal_id: str
     ok: bool
     message: str
-    account_login: Optional[int] = None
-    server: Optional[str] = None
-    company: Optional[str] = None
-    balance: Optional[float] = None
-    currency: Optional[str] = None
-    terminal_path: Optional[str] = None
+    account_login: int | None = None
+    server: str | None = None
+    company: str | None = None
+    balance: float | None = None
+    currency: str | None = None
+    terminal_path: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -87,14 +87,14 @@ class TerminalConnectionStatus:
 class TickSnapshot:
     terminal_id: str
     symbol: str
-    bid: Optional[float]
-    ask: Optional[float]
-    spread: Optional[float]
-    time: Optional[str]
+    bid: float | None
+    ask: float | None
+    spread: float | None
+    time: str | None
     ok: bool = True
     message: str = ""
-    time_msc: Optional[int] = None
-    received_at: Optional[str] = None
+    time_msc: int | None = None
+    received_at: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)

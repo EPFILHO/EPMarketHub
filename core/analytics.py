@@ -1,8 +1,7 @@
 from __future__ import annotations
 
+from collections.abc import Iterable
 from statistics import mean
-from typing import Iterable
-
 
 USD_BASE_PAIRS = {"USDJPY", "USDCHF", "USDCAD"}
 USD_QUOTE_PAIRS = {"EURUSD", "GBPUSD", "AUDUSD", "NZDUSD"}
@@ -36,7 +35,7 @@ def correlation(xs: Iterable[float], ys: Iterable[float]) -> float | None:
     if len(x) != len(y) or len(x) < 2:
         return None
     mx, my = mean(x), mean(y)
-    num = sum((a - mx) * (b - my) for a, b in zip(x, y))
+    num = sum((a - mx) * (b - my) for a, b in zip(x, y, strict=True))
     den_x = sum((a - mx) ** 2 for a in x) ** 0.5
     den_y = sum((b - my) ** 2 for b in y) ** 0.5
     if den_x == 0 or den_y == 0:

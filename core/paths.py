@@ -5,7 +5,6 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-
 APP_NAME = "EP Market Hub"
 APP_SLUG = "EP_Market_Hub"
 
