@@ -2,7 +2,7 @@
 
 ## Objetivo
 
-Refatorar a Base 0.4.7 sem alterar comportamento funcional.
+Refatorar a Base 0.4.8 sem alterar comportamento funcional, somente após aprovação explícita da mudança estrutural.
 
 ## Passos
 

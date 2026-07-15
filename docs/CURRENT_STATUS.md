@@ -1,4 +1,6 @@
-# Status atual — Base 0.4.7
+# Status atual — Base 0.4.8
+
+A 0.4.8 é uma etapa de hardening da baseline funcional 0.4.7. Ela não adiciona funcionalidades nem altera intencionalmente o fluxo validado com três instâncias MT5.
 
 ## Funcionalidades validadas
 
@@ -21,5 +23,6 @@
 - Contratos B3 precisam ser atualizados manualmente na lista de aliases.
 - A interface web ainda está concentrada em um `app.js` grande.
 - A ponte PySide/QWebChannel ainda está concentrada em `gui/main_window.py`.
-- Testes automatizados cobrem apenas parte da persistência, nomes de pastas e resolução de símbolos.
+- Testes automatizados cobrem persistência JSON, nomes de pastas, resolução de símbolos, limites do supervisor de workers e orquestração principal da bridge com fakes.
+- Processos reais, QWebEngine e integração com a biblioteca MetaTrader5 continuam fora da suíte automatizada multiplataforma.
 - O teste real de MT5 depende de Windows com terminais autenticados.

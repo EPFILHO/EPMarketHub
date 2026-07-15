@@ -36,6 +36,8 @@ user_data/mt5_instances/<CORRETORA>-<CONTA>/terminal64.exe
 
 A identidade de negócio é `corretora + conta informada`, mas cada terminal também possui um `id` interno estável.
 
+Os registros `user_data/terminals.json` e `user_data/symbols.json`, as instâncias, os logs e a instalação-modelo local são dados de runtime ignorados pelo Git. Somente os arquivos `*.example.json` sem dados reais e o arquivo de instrução da pasta `MT5/` são versionados.
+
 ## Comunicação
 
 Workers e processo principal trocam mensagens por filas do `multiprocessing`.
