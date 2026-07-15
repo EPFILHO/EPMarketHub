@@ -12,8 +12,13 @@ def build_manager(tmp_path: Path) -> TerminalManager:
 
 
 def test_instance_slug_is_uppercase_and_safe() -> None:
-    slug = TerminalManager.build_instance_slug("Rico Corretora", "3006/726479")
-    assert slug == "RICO-CORRETORA-3006-726479"
+    slug = TerminalManager.build_instance_slug("Corretora Demo", "CONTA / TESTE 001")
+    assert slug == "CORRETORA-DEMO-CONTA-TESTE-001"
+
+
+def test_instance_slug_collapses_spaces_and_unsafe_characters() -> None:
+    slug = TerminalManager.build_instance_slug("  Broker   Sandbox  ", " FAKE#002 ")
+    assert slug == "BROKER-SANDBOX-FAKE-002"
 
 
 def test_create_instance_copies_only_terminal64(tmp_path: Path) -> None:
