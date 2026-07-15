@@ -1,0 +1,63 @@
+# Python bytecode and tool caches
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+.coverage.*
+htmlcov/
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Build and packaging output
+build/
+dist/
+*.egg-info/
+
+# Local IDE and operating-system files
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# Temporary files and logs
+*.log
+*.tmp
+*.temp
+*.bak
+*.swp
+*.swo
+~$*
+
+# Local MetaTrader 5 model installation and isolated instances
+/MT5/*
+!/MT5/COLOQUE_A_BASE_MT5_AQUI.txt
+/user_data/mt5_instances/
+/user_data/logs/
+
+# Runtime registries (version only their *.example.json counterparts)
+/user_data/terminals.json
+/user_data/symbols.json
+
+# Qt / Qt WebEngine local profiles and caches
+/user_data/QtWebEngine/
+/user_data/qtwebengine/
+/user_data/Cache/
+/user_data/Code Cache/
+/user_data/GPUCache/
+/user_data/DawnCache/
+*.qmlc
+*.jsc
+
+# Local databases and session artifacts
+*.db
+*.db-journal
+*.sqlite
+*.sqlite3
+*.session
