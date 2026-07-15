@@ -1,0 +1,7 @@
+Copie para esta pasta somente o executável base do MetaTrader 5:
+
+MT5/terminal64.exe
+
+O EP Market Hub nunca abrirá este arquivo diretamente. Ele será copiado para
+criar cada instância isolada em user_data/mt5_instances. Na primeira abertura
+em modo portátil, o próprio MT5 criará as pastas e os dados necessários.

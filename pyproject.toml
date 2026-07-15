@@ -1,0 +1,19 @@
+[project]
+name = "ep-market-hub"
+version = "0.4.7"
+description = "Base local multi-MT5 para leitura e análise de mercado."
+requires-python = ">=3.11"
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+extend-exclude = ["user_data/mt5_instances", "MT5"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]
+ignore = ["E501"]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
+addopts = "-q"

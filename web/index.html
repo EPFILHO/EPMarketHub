@@ -1,0 +1,231 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>EP Market Hub</title>
+  <link rel="stylesheet" href="style.css" />
+  <script src="qrc:///qtwebchannel/qwebchannel.js"></script>
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="brand-mark">EP</div>
+        <div>
+          <h1>Market Hub</h1>
+          <p>Base 0.4.7 · Clean Handoff</p>
+        </div>
+      </div>
+
+      <nav>
+        <button class="nav-item active" data-view="terminals">Terminais MT5</button>
+        <button class="nav-item" data-view="symbols">Ativos</button>
+        <button class="nav-item" data-view="dashboard">Dashboard</button>
+      </nav>
+
+      <div class="notice">
+        <strong>Conexões isoladas.</strong>
+        <span>Cada MT5 permanece conectado em um processo Python próprio. O app não alterna a conexão entre terminais.</span>
+      </div>
+
+      <div class="notice neutral">
+        <strong>Fluxo ao vivo.</strong>
+        <span>A Base 0.4.7 mantém a base multi-MT5 validada e a documentação limpa para o Codex.</span>
+      </div>
+
+      <div class="notice neutral">
+        <strong>Sem senhas.</strong>
+        <span>O login é feito manualmente no MT5. O Market Hub lê apenas terminais já autenticados.</span>
+      </div>
+    </aside>
+
+    <main>
+      <header class="topbar">
+        <div>
+          <h2 id="viewTitle">Terminais MT5</h2>
+          <p id="viewSubtitle">Crie instâncias controladas e mantenha múltiplas conexões simultâneas.</p>
+        </div>
+        <div class="status-group">
+          <div class="status-pill" id="workersStatus">Leituras: 0 ativas</div>
+          <div class="status-pill" id="bridgeStatus">Conectando à ponte Python...</div>
+        </div>
+      </header>
+
+      <section class="view active" id="view-terminals">
+        <div class="grid two">
+          <section class="card">
+            <h3>Adicionar instância controlada</h3>
+            <p class="muted">O app usa automaticamente o arquivo-base <code>MT5/terminal64.exe</code> e cria as cópias isoladas em <code>user_data/mt5_instances</code>.</p>
+            <div id="mt5BaseStatus" class="base-status">Verificando o terminal64.exe base...</div>
+            <label>Apelido do terminal</label>
+            <input id="terminalLabel" placeholder="Ex.: Forex Principal" />
+            <label>Corretora</label>
+            <input id="brokerName" placeholder="Ex.: Corretora Forex ou B3" />
+            <label>Número da conta (obrigatório, sem senha)</label>
+            <input id="accountLogin" placeholder="Ex.: 915051" />
+            <button class="primary" id="btnCreateTerminal" disabled>Criar instância controlada</button>
+            <div class="hint">Primeira execução: abra o terminal criado e faça login manualmente no próprio MT5. A combinação Corretora + Conta não pode se repetir. Os cadastros são ilimitados; o limite simultâneo é de 3 MT5.</div>
+          </section>
+
+          <section class="card">
+            <div class="card-head">
+              <div>
+                <h3>Terminais cadastrados</h3>
+                <p class="muted">Cadastre quantos terminais precisar. Até 3 podem ficar abertos/conectados simultaneamente. Abrir um MT5 também inicia sua leitura.</p>
+              </div>
+              <div class="terminal-toolbar">
+                <span id="selectionStatus" class="selection-status">Selecionados: 0 de 3</span>
+                <div class="actions compact">
+                  <button id="btnOpenSelected" class="success" disabled>Abrir selecionados</button>
+                  <button id="btnCloseSelected" disabled>Fechar selecionados</button>
+                  <button id="btnStopAll">Parar leituras</button>
+                  <button id="btnReloadTerminals">Atualizar</button>
+                </div>
+              </div>
+            </div>
+            <div id="terminalList" class="list empty">Nenhum terminal cadastrado ainda.</div>
+          </section>
+        </div>
+      </section>
+
+      <section class="view" id="view-symbols">
+        <section class="card">
+          <div class="card-head">
+            <div>
+              <h3>Ativos lógicos</h3>
+              <p class="muted">Os aliases são resolvidos separadamente em cada corretora. A 0.4.7 inclui aliases Cash, WIN$, WDO$, WINQ26 e Bitcoin.</p>
+            </div>
+            <button id="btnReloadSymbols">Atualizar</button>
+          </div>
+          <div id="symbolList" class="symbol-grid"></div>
+        </section>
+      </section>
+
+      <section class="view" id="view-dashboard">
+        <section class="summary-grid" id="workerSummary"></section>
+
+        <section class="card live-test-card">
+          <div class="card-head live-head">
+            <div>
+              <h3>Teste simultâneo — até 3 MT5 ao vivo</h3>
+              <p class="muted">Escolha um terminal e um ativo em cada painel. “Leituras” avança em toda consulta; “ticks novos” avança quando o preço ou o horário do tick muda.</p>
+            </div>
+            <div class="actions compact">
+              <button id="btnStartLiveAll" class="success">Iniciar 3 fluxos</button>
+              <button id="btnStopLiveAll">Parar teste</button>
+            </div>
+          </div>
+
+          <div id="liveProof" class="proof-banner">
+            Configure os painéis para comprovar as conexões simultâneas.
+          </div>
+
+          <div class="live-grid">
+            <article class="live-card" id="liveCard1" data-slot="live-1">
+              <div class="live-card-title"><strong>Fluxo 1</strong><span class="status-dot" id="liveDot1"></span></div>
+              <div class="live-config">
+                <label>Terminal</label><select id="liveTerminal1"></select>
+                <label>Ativo</label><select id="liveSymbol1"></select>
+                <div class="actions"><button class="success" data-live-start="1">Iniciar</button><button data-live-stop="1">Parar</button></div>
+              </div>
+              <div class="live-status" id="liveStatus1">Não iniciado.</div>
+              <div class="quote-row"><div><small>Bid</small><strong id="liveBid1">—</strong></div><div><small>Ask</small><strong id="liveAsk1">—</strong></div></div>
+              <div class="live-meta" id="liveMeta1">Aguardando dados.</div>
+            </article>
+
+            <article class="live-card" id="liveCard2" data-slot="live-2">
+              <div class="live-card-title"><strong>Fluxo 2</strong><span class="status-dot" id="liveDot2"></span></div>
+              <div class="live-config">
+                <label>Terminal</label><select id="liveTerminal2"></select>
+                <label>Ativo</label><select id="liveSymbol2"></select>
+                <div class="actions"><button class="success" data-live-start="2">Iniciar</button><button data-live-stop="2">Parar</button></div>
+              </div>
+              <div class="live-status" id="liveStatus2">Não iniciado.</div>
+              <div class="quote-row"><div><small>Bid</small><strong id="liveBid2">—</strong></div><div><small>Ask</small><strong id="liveAsk2">—</strong></div></div>
+              <div class="live-meta" id="liveMeta2">Aguardando dados.</div>
+            </article>
+
+            <article class="live-card" id="liveCard3" data-slot="live-3">
+              <div class="live-card-title"><strong>Fluxo 3</strong><span class="status-dot" id="liveDot3"></span></div>
+              <div class="live-config">
+                <label>Terminal</label><select id="liveTerminal3"></select>
+                <label>Ativo</label><select id="liveSymbol3"></select>
+                <div class="actions"><button class="success" data-live-start="3">Iniciar</button><button data-live-stop="3">Parar</button></div>
+              </div>
+              <div class="live-status" id="liveStatus3">Não iniciado.</div>
+              <div class="quote-row"><div><small>Bid</small><strong id="liveBid3">—</strong></div><div><small>Ask</small><strong id="liveAsk3">—</strong></div></div>
+              <div class="live-meta" id="liveMeta3">Aguardando dados.</div>
+            </article>
+          </div>
+
+          <div class="hint">Para a B3, esta base inclui o contrato de teste <code>WINQ26</code> e os aliases contínuos <code>WIN$</code>/<code>WDO$</code>. O vínculo manual por corretora entra na próxima etapa.</div>
+        </section>
+
+        <section class="card snapshot-card">
+          <div class="card-head">
+            <div>
+              <h3>Snapshot consolidado</h3>
+              <p class="muted">Visão ampla de todos os ativos configurados no terminal selecionado, atualizada a cada 2 segundos.</p>
+            </div>
+            <select id="snapshotTerminal"></select>
+          </div>
+          <button class="primary" id="btnSnapshot">Solicitar atualização agora</button>
+          <div id="snapshotStatus" class="snapshot-status">Sem snapshot ainda.</div>
+          <div id="ticksTable" class="table-wrap"></div>
+        </section>
+      </section>
+    </main>
+  </div>
+
+
+  <div id="editTerminalModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="editTerminalTitle">
+    <div class="modal-backdrop" data-close-edit></div>
+    <section class="modal-panel">
+      <div class="modal-head">
+        <div>
+          <h3 id="editTerminalTitle">Editar instância MT5</h3>
+          <p class="muted">O Market Hub fechará temporariamente o worker e o MT5, renomeará a pasta se necessário e restaurará o estado anterior.</p>
+        </div>
+        <button class="icon-button" data-close-edit aria-label="Fechar">×</button>
+      </div>
+      <input type="hidden" id="editTerminalId" />
+      <label>Apelido do terminal</label>
+      <input id="editTerminalLabel" />
+      <label>Corretora</label>
+      <input id="editBrokerName" />
+      <label>Número da conta</label>
+      <input id="editAccountLogin" />
+      <div class="readonly-box" id="editTerminalDetails"></div>
+      <div class="actions modal-actions">
+        <button data-close-edit>Cancelar</button>
+        <button class="primary-inline" id="btnSaveTerminalEdit">Salvar alterações</button>
+      </div>
+    </section>
+  </div>
+
+  <div id="deleteTerminalModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="deleteTerminalTitle">
+    <div class="modal-backdrop" data-close-delete></div>
+    <section class="modal-panel danger-panel">
+      <div class="modal-head">
+        <div>
+          <h3 id="deleteTerminalTitle">Excluir instância MT5</h3>
+          <p class="muted">O Market Hub fechará o worker e o MT5, removerá o cadastro e apagará a pasta local desta instância. Isso não exclui nem altera a conta na corretora.</p>
+        </div>
+        <button class="icon-button" data-close-delete aria-label="Fechar">×</button>
+      </div>
+      <input type="hidden" id="deleteTerminalId" />
+      <div class="readonly-box" id="deleteTerminalDetails"></div>
+      <label>Digite <strong>EXCLUIR</strong> para confirmar</label>
+      <input id="deleteTerminalConfirmation" autocomplete="off" placeholder="EXCLUIR" />
+      <div class="actions modal-actions">
+        <button data-close-delete>Cancelar</button>
+        <button class="danger-solid" id="btnConfirmDeleteTerminal" disabled>Excluir terminal</button>
+      </div>
+    </section>
+  </div>
+
+  <div id="toast" class="toast hidden"></div>
+  <script src="app.js"></script>
+</body>
+</html>

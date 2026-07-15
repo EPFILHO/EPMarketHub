@@ -1,0 +1,38 @@
+# Roadmap sugerido
+
+## 0.5 — Refatoração sem mudança funcional
+
+- Dividir `gui/main_window.py` em componentes menores.
+- Dividir `web/app.js` por responsabilidade.
+- Fortalecer testes unitários.
+- Registrar estados e erros de worker de forma mais clara.
+
+## 0.6 — Mapeamento de símbolos por terminal
+
+- Permitir escolher manualmente o símbolo real de cada ativo lógico em cada corretora.
+- Salvar vínculos por terminal.
+- Resolver contratos B3 sem depender de aliases globais.
+
+## 0.7 — Busca de símbolos disponíveis
+
+- Consultar `symbols_get()` no worker.
+- Criar busca/pesquisa na interface.
+- Mostrar se o símbolo está tradável, visível, com cotação e horário recente.
+
+## 0.8 — Candles multi-timeframe
+
+- Coletar M1, M5, M15, H1, H4 e D1 conforme configuração.
+- Preparar dados para análise de tendência.
+
+## 0.9 — Histórico local
+
+- SQLite ou cache local para snapshots/candles.
+- Deduplicação e retenção controlada.
+
+## 1.0 — Primeiros painéis analíticos
+
+- Força do dólar.
+- Divergência entre índices.
+- Risk-on/risk-off.
+- Correlações móveis.
+- Tendência multi-timeframe.
