@@ -52,7 +52,17 @@ def main() -> int:
     configure_logging(paths)
 
     app = QApplication(sys.argv)
-    terminal_registry = TerminalRegistry(paths.terminals_file)
+    terminal_registry = TerminalRegistry(
+        paths.terminals_file,
+        root_dir=paths.root_dir,
+        instances_dir=paths.mt5_instances_dir,
+    )
+    migrated_terminals = terminal_registry.migrate_paths()
+    if migrated_terminals:
+        logging.getLogger(__name__).info(
+            "Caminhos relativos atualizados em %s cadastro(s) de terminal.",
+            migrated_terminals,
+        )
     symbol_registry = SymbolRegistry(paths.symbols_file)
     symbol_registry.ensure_defaults(DEFAULT_SYMBOLS)
     terminal_manager = TerminalManager(paths.mt5_instances_dir, paths.mt5_base_dir)
