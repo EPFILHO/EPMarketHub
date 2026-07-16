@@ -71,3 +71,12 @@
 - Proteção de executáveis, instâncias, sessões, logs e registros locais contra versionamento.
 - Ampliação dos testes de caracterização para registros, workers, bridge e símbolos usando fakes.
 - Correções seguras de estilo e tipagem para conformidade com Ruff.
+
+## 0.4.9
+
+- Continuação do hardening da baseline, sem funcionalidades novas e sem mudança estrutural.
+- Botão **Parar leituras** habilitado somente quando existe worker ativo.
+- Feedback temporário no botão **Atualizar** durante a sincronização manual do estado.
+- Remoção compensatória da pasta recém-criada quando o cadastro não pode ser persistido.
+- Validação do reinício do worker após edição, com rollback e diagnóstico explícito se a restauração falhar.
+- Testes automatizados para as novas condições de falha sem abrir MT5 real.

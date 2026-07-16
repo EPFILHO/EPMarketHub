@@ -1,6 +1,6 @@
-# Status atual — Base 0.4.8
+# Status atual — Base 0.4.9
 
-A 0.4.8 é uma etapa de hardening da baseline funcional 0.4.7. Ela não adiciona funcionalidades nem altera intencionalmente o fluxo validado com três instâncias MT5.
+A 0.4.9 continua o hardening da baseline funcional 0.4.7. Ela não adiciona funcionalidades nem altera intencionalmente o fluxo validado com três instâncias MT5.
 
 ## Funcionalidades validadas
 
@@ -16,6 +16,14 @@ A 0.4.8 é uma etapa de hardening da baseline funcional 0.4.7. Ela não adiciona
 - Teste simultâneo de até 3 fluxos ao vivo.
 - Fechamento dos MT5 controlados ao sair do aplicativo.
 - Resolução de aliases como `US30Cash`, `US100Cash`, `US500Cash`, `WINQ26`, `BTCUSD` etc.
+
+## Hardening 0.4.9
+
+- Ações globais de leitura coerentes com a existência de workers ativos.
+- Rollback da pasta de instância quando o cadastro JSON falha.
+- Edição de terminal ativo tratada como operação compensável quando o worker não reinicia.
+
+Esses itens possuem cobertura automatizada com fakes. A edição de um terminal conectado e as transições visuais ainda devem ser confirmadas no Windows com MT5 real antes do merge.
 
 ## Limitações conhecidas
 

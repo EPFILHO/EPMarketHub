@@ -1,8 +1,8 @@
-# EP Market Hub — Base 0.4.8
+# EP Market Hub — Base 0.4.9
 
 Aplicativo desktop local para organizar instâncias controladas do MetaTrader 5 e ler dados de mercado por meio da biblioteca Python `MetaTrader5`.
 
-Esta versão endurece a baseline funcional 0.4.7 sem introduzir funcionalidades novas. A parte mais importante do projeto permanece validada: até 3 terminais MT5 podem ficar abertos e conectados ao mesmo tempo, cada um em um processo Python independente.
+Esta versão continua o endurecimento da baseline funcional 0.4.7 sem introduzir funcionalidades novas. Ela corrige o estado de ações globais da interface e melhora a recuperação de falhas ao cadastrar ou editar terminais. A parte mais importante do projeto permanece preservada: até 3 terminais MT5 podem ficar abertos e conectados ao mesmo tempo, cada um em um processo Python independente.
 
 ## Estado da base
 
@@ -83,6 +83,7 @@ user_data/              Dados locais e instâncias isoladas.
 
 - `AGENTS.md`: regras para agentes/Codex trabalharem neste repositório.
 - `docs/ARCHITECTURE.md`: arquitetura atual.
+- `docs/BASELINE_AUDIT_0.4.7.md`: auditoria técnica da baseline validada.
 - `docs/CURRENT_STATUS.md`: o que funciona e o que ainda falta.
 - `docs/MANUAL_TESTS.md`: roteiro atual de testes manuais.
 - `docs/ROADMAP.md`: próximos módulos recomendados.
