@@ -25,6 +25,9 @@ A 0.4.9 continua o hardening da baseline funcional 0.4.7. Ela não adiciona func
 - Rollback da renomeação e do cadastro para falhas durante a edição de terminal fechado.
 - Migração automática de caminhos absolutos legados para caminhos relativos à instalação atual.
 - Identificação dos fluxos sem leitura recente e estado coerente da ação **Iniciar/Alterar**.
+- Distinção visual entre leitura atrasada e fluxo parado, sem reaproveitar cotação ou terminal de outro fluxo.
+- Abertura em lote bloqueada quando a seleção não cabe nas vagas simultâneas de MT5 e workers.
+- Snapshot individual removido dos cards; a coleta automática e o painel consolidado continuam ativos.
 - Mensagens de falha de edição visíveis no próprio modal.
 
 Esses itens possuem cobertura automatizada com fakes e testes de estado em Node. O bloqueio visual da edição, a migração do JSON local e a renomeação após fechar um MT5 real ainda devem ser confirmados no Windows antes do merge.
@@ -38,3 +41,4 @@ Esses itens possuem cobertura automatizada com fakes e testes de estado em Node.
 - Testes automatizados cobrem persistência JSON, nomes de pastas, resolução de símbolos, limites do supervisor de workers e orquestração principal da bridge com fakes.
 - Processos reais, QWebEngine e integração com a biblioteca MetaTrader5 continuam fora da suíte automatizada multiplataforma.
 - O teste real de MT5 depende de Windows com terminais autenticados.
+- Numeração alfabética dos MT5, com renumeração após mudanças, e splashscreen permanecem como evoluções futuras aprovadas conceitualmente.

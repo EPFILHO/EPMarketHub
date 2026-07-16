@@ -1,5 +1,12 @@
 # Roadmap sugerido
 
+## Evoluções visuais futuras
+
+- Numerar os MT5 conforme a ordem alfabética exibida, renumerando-os quando o cadastro ou a ordenação mudar.
+- Reutilizar o número no badge da interface e, após validação técnica no Windows, no ícone da instância portátil.
+- Adicionar splashscreen coerente com a identidade do EP Market Hub durante o carregamento do QWebEngineView.
+- Implementar numeração e splash somente após aprovação de escopo e conclusão da baseline 0.4.9.
+
 ## Próxima etapa — caracterização de estados antes da 0.5
 
 - Cobrir transições terminal fechado/aberto e worker parado/iniciando/conectado/erro.

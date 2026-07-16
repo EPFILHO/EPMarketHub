@@ -45,7 +45,20 @@
 1. Inicie um fluxo e confirme que seu botão **Iniciar** fica desativado.
 2. Troque o ativo ou terminal no seletor e confirme que o botão passa a **Alterar** e fica habilitado.
 3. Aplique a alteração e confirme que o botão volta a **Iniciar** desativado.
-4. Interrompa temporariamente a leitura de um fluxo e confirme que o banner informa seu número, terminal, ativo e idade da última leitura.
+4. Atrase temporariamente um fluxo ainda ativo e confirme que o banner informa seu número, terminal, ativo e idade da última leitura como **leitura atrasada**.
+5. Confirme que o banner mantém espaço para duas linhas e não desloca os cards quando o detalhe aparece.
+6. Feche o MT5 usado por um dos fluxos e volte ao Dashboard.
+7. Confirme que o seletor preserva o terminal anterior com a indicação **MT5 fechado**, sem escolher outra corretora automaticamente.
+8. Confirme que bid, ask, PID e demais dados antigos são limpos e que o fluxo é contado como parado, não como leitura atrasada.
+9. Selecione outro terminal conectado e confirme que **Alterar** é habilitado.
+
+## Capacidade e ações dos terminais
+
+1. Com 3 MT5 abertos, selecione-os e confirme que **Abrir selecionados** permanece desativado.
+2. Confirme que **Fechar selecionados** permanece habilitado para os terminais abertos selecionados.
+3. Feche um MT5, selecione exatamente um terminal fechado e confirme que **Abrir selecionados** volta a ser habilitado.
+4. Confirme que os cards não exibem mais o botão **Snapshot**.
+5. No Dashboard, confirme que o snapshot consolidado continua atualizando automaticamente e que **Solicitar atualização agora** continua funcional.
 
 ## Exclusão
 

@@ -83,5 +83,9 @@
 - Caminhos de instâncias persistidos relativamente à instalação atual, com migração dos registros absolutos legados.
 - Banner do teste simultâneo identifica nominalmente cada fluxo sem leitura recente.
 - Botão individual de fluxo é desativado quando a configuração já está aplicada e muda para **Alterar** após nova seleção.
+- Banner diferencia leitura atrasada de fluxo parado e mantém altura mínima para duas linhas.
+- Fluxo parado preserva o terminal configurado, sem substituição automática nem cotação antiga na tela.
+- Botão **Abrir selecionados** respeita as vagas simultâneas disponíveis para MT5 e workers.
+- Remoção do botão redundante **Snapshot** dos cards de terminais; snapshots automáticos e consolidados permanecem disponíveis.
 - Erros de edição ficam visíveis dentro do modal e em toast acima dos diálogos.
 - Testes automatizados para as novas condições de falha sem abrir MT5 real.
