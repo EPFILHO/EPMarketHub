@@ -434,6 +434,11 @@ function updateWorkersStatus() {
   const limit = Number(runtimeLimits.max_active_mt5 || 3);
   el.textContent = `Leituras: ${connected} conectadas · ${alive}/${limit} ativas`;
   el.classList.toggle('ok', connected > 0);
+  const stopAllButton = document.getElementById('btnStopAll');
+  stopAllButton.disabled = alive === 0;
+  stopAllButton.title = alive === 0
+    ? 'Nenhuma leitura ativa para encerrar'
+    : `Encerra as ${alive} leitura(s) ativa(s)`;
 }
 
 function renderWorkerSummary() {
@@ -700,6 +705,19 @@ async function loadTerminals() {
   const res = parseResponse(await bridge.getTerminals());
   if (!res.ok) return toast(res.message, true);
   renderTerminals(res.data);
+}
+
+async function reloadTerminals() {
+  const button = document.getElementById('btnReloadTerminals');
+  if (button.disabled) return;
+  button.disabled = true;
+  button.textContent = 'Atualizando...';
+  try {
+    await loadTerminals();
+  } finally {
+    button.textContent = 'Atualizar';
+    button.disabled = false;
+  }
 }
 
 async function loadWorkerStates() {
@@ -1019,7 +1037,7 @@ window.addEventListener('DOMContentLoaded', () => {
   document.querySelectorAll('[data-close-delete]').forEach(el => el.addEventListener('click', closeDeleteTerminal));
   document.getElementById('deleteTerminalConfirmation').addEventListener('input', updateDeleteConfirmationState);
   document.getElementById('btnConfirmDeleteTerminal').addEventListener('click', confirmDeleteTerminal);
-  document.getElementById('btnReloadTerminals').addEventListener('click', loadTerminals);
+  document.getElementById('btnReloadTerminals').addEventListener('click', reloadTerminals);
   document.getElementById('btnReloadSymbols').addEventListener('click', loadSymbols);
   document.getElementById('btnOpenSelected').addEventListener('click', openSelectedTerminals);
   document.getElementById('btnCloseSelected').addEventListener('click', closeSelectedTerminals);
