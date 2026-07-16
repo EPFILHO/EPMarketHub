@@ -64,6 +64,8 @@ O MT5, ao ser aberto em modo portátil, cria os demais arquivos necessários den
 
 Os arquivos `user_data/terminals.json` e `user_data/symbols.json` são registros locais de runtime e não são versionados. Os modelos seguros `user_data/terminals.example.json` e `user_data/symbols.example.json` permanecem no repositório.
 
+Os caminhos das instâncias são persistidos relativamente à pasta de instalação. Ao mover a pasta completa do EP Market Hub, os registros são resolvidos novamente contra o novo local; caminhos absolutos de versões anteriores são migrados na próxima inicialização.
+
 Instâncias reais, logs, sessões do MT5, executáveis, credenciais e dados pessoais são protegidos pelo `.gitignore` e não devem ser adicionados manualmente ao Git.
 
 ## Estrutura

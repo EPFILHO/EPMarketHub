@@ -127,7 +127,7 @@
               <div class="live-config">
                 <label>Terminal</label><select id="liveTerminal1"></select>
                 <label>Ativo</label><select id="liveSymbol1"></select>
-                <div class="actions"><button class="success" data-live-start="1">Iniciar</button><button data-live-stop="1">Parar</button></div>
+                <div class="actions"><button class="success" data-live-start="1" disabled>Iniciar</button><button data-live-stop="1">Parar</button></div>
               </div>
               <div class="live-status" id="liveStatus1">Não iniciado.</div>
               <div class="quote-row"><div><small>Bid</small><strong id="liveBid1">—</strong></div><div><small>Ask</small><strong id="liveAsk1">—</strong></div></div>
@@ -139,7 +139,7 @@
               <div class="live-config">
                 <label>Terminal</label><select id="liveTerminal2"></select>
                 <label>Ativo</label><select id="liveSymbol2"></select>
-                <div class="actions"><button class="success" data-live-start="2">Iniciar</button><button data-live-stop="2">Parar</button></div>
+                <div class="actions"><button class="success" data-live-start="2" disabled>Iniciar</button><button data-live-stop="2">Parar</button></div>
               </div>
               <div class="live-status" id="liveStatus2">Não iniciado.</div>
               <div class="quote-row"><div><small>Bid</small><strong id="liveBid2">—</strong></div><div><small>Ask</small><strong id="liveAsk2">—</strong></div></div>
@@ -151,7 +151,7 @@
               <div class="live-config">
                 <label>Terminal</label><select id="liveTerminal3"></select>
                 <label>Ativo</label><select id="liveSymbol3"></select>
-                <div class="actions"><button class="success" data-live-start="3">Iniciar</button><button data-live-stop="3">Parar</button></div>
+                <div class="actions"><button class="success" data-live-start="3" disabled>Iniciar</button><button data-live-stop="3">Parar</button></div>
               </div>
               <div class="live-status" id="liveStatus3">Não iniciado.</div>
               <div class="quote-row"><div><small>Bid</small><strong id="liveBid3">—</strong></div><div><small>Ask</small><strong id="liveAsk3">—</strong></div></div>
@@ -185,7 +185,7 @@
       <div class="modal-head">
         <div>
           <h3 id="editTerminalTitle">Editar instância MT5</h3>
-          <p class="muted">O Market Hub fechará temporariamente o worker e o MT5, renomeará a pasta se necessário e restaurará o estado anterior.</p>
+          <p class="muted">A edição só é permitida com o MT5 fechado e a leitura parada. Alterar corretora ou conta também renomeia a pasta da instância.</p>
         </div>
         <button class="icon-button" data-close-edit aria-label="Fechar">×</button>
       </div>
@@ -197,6 +197,7 @@
       <label>Número da conta</label>
       <input id="editAccountLogin" />
       <div class="readonly-box" id="editTerminalDetails"></div>
+      <div id="editTerminalMessage" class="form-message hidden" role="alert"></div>
       <div class="actions modal-actions">
         <button data-close-edit>Cancelar</button>
         <button class="primary-inline" id="btnSaveTerminalEdit">Salvar alterações</button>

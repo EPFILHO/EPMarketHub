@@ -80,4 +80,8 @@
 - Remoção compensatória da pasta recém-criada quando o cadastro não pode ser persistido.
 - Edição bloqueada enquanto o MT5 estiver aberto ou seu worker permanecer ativo.
 - Rollback da renomeação e do cadastro se uma edição de terminal fechado falhar.
+- Caminhos de instâncias persistidos relativamente à instalação atual, com migração dos registros absolutos legados.
+- Banner do teste simultâneo identifica nominalmente cada fluxo sem leitura recente.
+- Botão individual de fluxo é desativado quando a configuração já está aplicada e muda para **Alterar** após nova seleção.
+- Erros de edição ficam visíveis dentro do modal e em toast acima dos diálogos.
 - Testes automatizados para as novas condições de falha sem abrir MT5 real.

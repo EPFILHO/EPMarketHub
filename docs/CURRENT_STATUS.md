@@ -23,8 +23,11 @@ A 0.4.9 continua o hardening da baseline funcional 0.4.7. Ela não adiciona func
 - Rollback da pasta de instância quando o cadastro JSON falha.
 - Edição permitida somente com MT5 fechado e worker parado.
 - Rollback da renomeação e do cadastro para falhas durante a edição de terminal fechado.
+- Migração automática de caminhos absolutos legados para caminhos relativos à instalação atual.
+- Identificação dos fluxos sem leitura recente e estado coerente da ação **Iniciar/Alterar**.
+- Mensagens de falha de edição visíveis no próprio modal.
 
-Esses itens possuem cobertura automatizada com fakes. O bloqueio visual da edição e a renomeação após fechar um MT5 real ainda devem ser confirmados no Windows antes do merge.
+Esses itens possuem cobertura automatizada com fakes e testes de estado em Node. O bloqueio visual da edição, a migração do JSON local e a renomeação após fechar um MT5 real ainda devem ser confirmados no Windows antes do merge.
 
 ## Limitações conhecidas
 

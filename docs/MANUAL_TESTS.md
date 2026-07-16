@@ -31,6 +31,22 @@
 6. Confirme que o cadastro foi atualizado sem abrir o MT5 e sem alterar o nome da pasta.
 7. Ainda com o terminal fechado, altere corretora ou conta e confirme que a pasta é renomeada.
 
+## Portabilidade da instalação
+
+1. Feche o aplicativo e todos os MT5 controlados.
+2. Mova ou copie a pasta completa do EP Market Hub, incluindo `user_data/mt5_instances/`.
+3. Inicie `app.py` pela nova pasta, mesmo que o terminal do VS Code esteja em outro diretório.
+4. Confirme que os cards mostram caminhos sob a nova instalação.
+5. Confirme que `user_data/terminals.json` contém caminhos iniciados por `user_data/`, sem letra de unidade.
+6. Com o MT5 fechado, altere corretora ou conta e confirme a renomeação na nova instalação.
+
+## Estado dos fluxos ao vivo
+
+1. Inicie um fluxo e confirme que seu botão **Iniciar** fica desativado.
+2. Troque o ativo ou terminal no seletor e confirme que o botão passa a **Alterar** e fica habilitado.
+3. Aplique a alteração e confirme que o botão volta a **Iniciar** desativado.
+4. Interrompa temporariamente a leitura de um fluxo e confirme que o banner informa seu número, terminal, ativo e idade da última leitura.
+
 ## Exclusão
 
 1. Tente excluir um terminal aberto: o botão deve estar desativado.

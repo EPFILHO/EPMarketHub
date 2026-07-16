@@ -79,6 +79,7 @@ O supervisor impede worker duplicado para o mesmo terminal ou executável e limi
 | Dados de runtime e executável podiam ser rastreados por engano. | Mitigado na 0.4.8 com `.gitignore` e exemplos seguros. |
 | Cobertura automatizada pequena para limites, seleção, aliases e shutdown. | Ampliada na 0.4.8 com fakes multiplataforma. |
 | Pasta podia ficar órfã se a criação funcionasse e a persistência falhasse. | Corrigido na 0.4.9 com rollback restrito à área controlada. |
+| Caminhos absolutos mantinham referência à instalação anterior depois de mover o projeto. | Corrigido na 0.4.9 com persistência relativa e migração automática. |
 | Edição ativa exigia fechar, renomear, relançar e restaurar o worker. | Eliminado na 0.4.9: edição só é aceita com MT5 fechado e worker parado. |
 | Ações globais não refletiam sempre o estado dos workers. | Corrigido parcialmente na 0.4.9; faltam testes automatizados do DOM. |
 | `MarketHubBridge` concentra persistência, processos, slots e payloads. | Pendente; divisão exige aprovação e caracterização prévia. |
