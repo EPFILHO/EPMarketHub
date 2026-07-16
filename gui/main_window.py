@@ -598,7 +598,7 @@ class MarketHubBridge(QObject):
 
     @Slot(result=str)
     def startAllWorkers(self) -> str:
-        """Compatibilidade temporária; a GUI 0.4.7 usa startSelectedWorkers."""
+        """Compatibilidade temporária; a GUI atual usa startSelectedWorkers."""
         terminal_ids = [profile.id for profile in self.terminal_registry.list()[: self.max_active_mt5]]
         return self.startSelectedWorkers(json.dumps(terminal_ids))
 
@@ -710,7 +710,7 @@ class MainWindow(QMainWindow):
         self.terminal_manager = terminal_manager
         self.worker_manager = worker_manager
         self._shutdown_done = False
-        self.setWindowTitle("EP Market Hub — Base 0.4.7 Clean Handoff")
+        self.setWindowTitle("EP Market Hub — Base 0.4.9 Clean Handoff")
         self.resize(1440, 860)
 
         self.web_view = QWebEngineView(self)

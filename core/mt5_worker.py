@@ -71,7 +71,7 @@ def mt5_worker_main(
 ) -> None:
     """Processo persistente que possui uma única conexão MetaTrader5.
 
-    Além dos snapshots consolidados, a Base 0.4.7 aceita assinaturas de fluxo ao
+    Além dos snapshots consolidados, a baseline atual aceita assinaturas de fluxo ao
     vivo. Cada assinatura consulta um ativo no processo proprietário daquele
     terminal, sem alternar ``initialize`` entre terminais.
     """
