@@ -1,4 +1,5 @@
 import json
+import logging
 import sys
 from pathlib import Path
 from types import ModuleType
@@ -158,6 +159,7 @@ class FakeWorkerManager:
         self.running_ids = set()
         self.started = []
         self.stopped = []
+        self.start_results = []
 
     def active_count(self) -> int:
         return len(self.running_ids)
@@ -167,6 +169,11 @@ class FakeWorkerManager:
 
     def start_worker(self, profile: TerminalProfile, symbols) -> tuple[bool, str]:
         self.started.append(profile.id)
+        if self.start_results:
+            started, message = self.start_results.pop(0)
+            if started:
+                self.running_ids.add(profile.id)
+            return started, message
         if profile.id in self.running_ids:
             return False, "A leitura deste terminal já está ativa."
         if self.active_count() >= self.max_workers:
@@ -265,6 +272,89 @@ def test_create_terminal_rejects_duplicate_broker_and_account(tmp_path: Path) ->
 
     assert response["ok"] is False
     assert terminal_manager.created == []
+
+
+class FailingUpsertRegistry(TerminalRegistry):
+    def upsert(self, profile: TerminalProfile) -> TerminalProfile:
+        raise OSError("falha simulada ao salvar cadastro")
+
+
+def test_create_terminal_removes_new_instance_if_registry_save_fails(tmp_path: Path) -> None:
+    base_dir = tmp_path / "MT5"
+    instances_dir = tmp_path / "user_data" / "mt5_instances"
+    base_dir.mkdir()
+    (base_dir / "terminal64.exe").write_bytes(b"fake-terminal-for-tests")
+    registry = FailingUpsertRegistry(tmp_path / "terminals.json")
+    terminal_manager = TerminalManager(instances_dir, base_dir)
+    bridge = MarketHubBridge(
+        terminal_registry=registry,
+        symbol_registry=FakeSymbolRegistry(),
+        terminal_manager=terminal_manager,
+        worker_manager=FakeWorkerManager(),
+    )
+
+    response = json.loads(bridge.createTerminal("Teste", "Broker Sandbox", "FAKE-NEW"))
+
+    assert response["ok"] is False
+    assert "falha simulada ao salvar cadastro" in response["message"]
+    assert list(instances_dir.iterdir()) == []
+
+
+def test_update_terminal_rolls_back_if_worker_does_not_restart(tmp_path: Path) -> None:
+    bridge, terminal_manager, worker_manager = build_bridge(tmp_path, ["one"])
+    original = bridge.terminal_registry.get("one")
+    terminal_manager.open_ids.add("one")
+    worker_manager.running_ids.add("one")
+    worker_manager.start_results = [
+        (False, "falha simulada no novo worker"),
+        (True, "worker anterior restaurado"),
+    ]
+
+    response = json.loads(
+        bridge.updateTerminal(
+            "one",
+            "Apelido alterado",
+            original.broker_name,
+            original.account_login,
+        )
+    )
+
+    restored = bridge.terminal_registry.get("one")
+    assert response["ok"] is False
+    assert "Não foi possível restaurar a leitura após editar" in response["message"]
+    assert restored.label == original.label
+    assert worker_manager.running_ids == {"one"}
+    assert worker_manager.started == ["one", "one"]
+    assert terminal_manager.stopped == ["one", "one"]
+
+
+def test_update_terminal_reports_failure_to_restore_previous_worker(
+    tmp_path: Path,
+    caplog,
+) -> None:
+    bridge, terminal_manager, worker_manager = build_bridge(tmp_path, ["one"])
+    original = bridge.terminal_registry.get("one")
+    terminal_manager.open_ids.add("one")
+    worker_manager.running_ids.add("one")
+    worker_manager.start_results = [
+        (False, "falha simulada no novo worker"),
+        (False, "falha simulada no worker anterior"),
+    ]
+
+    with caplog.at_level(logging.ERROR):
+        response = json.loads(
+            bridge.updateTerminal(
+                "one",
+                "Apelido alterado",
+                original.broker_name,
+                original.account_login,
+            )
+        )
+
+    assert response["ok"] is False
+    assert "não foi possível restaurar a leitura anterior" in response["message"]
+    assert "Falha ao restaurar o worker anterior do terminal one" in caplog.text
+    assert worker_manager.running_ids == set()
 
 
 class CountingTimer:

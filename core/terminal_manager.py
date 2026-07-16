@@ -84,6 +84,18 @@ class TerminalManager:
             raise FileNotFoundError(f"Instância criada sem terminal64.exe: {terminal_exe}")
         return terminal_exe
 
+    def rollback_created_instance(self, instance_dir: Path) -> bool:
+        """Remove somente uma pasta recém-criada dentro da área controlada."""
+
+        instance_dir = instance_dir.resolve()
+        if instance_dir == self.instances_dir or not self._is_inside_instances(instance_dir):
+            raise ValueError("A instância não está dentro da pasta controlada do EP Market Hub.")
+        if not instance_dir.exists():
+            return False
+        logger.info("Removendo instância MT5 após falha no cadastro: %s", instance_dir)
+        shutil.rmtree(instance_dir)
+        return True
+
     def rename_instance(self, profile: TerminalProfile, new_slug: str) -> tuple[Path, Path]:
         """Renomeia uma instância já fechada e retorna (pasta, terminal64.exe)."""
 
