@@ -78,5 +78,6 @@
 - Botão **Parar leituras** habilitado somente quando existe worker ativo.
 - Feedback temporário no botão **Atualizar** durante a sincronização manual do estado.
 - Remoção compensatória da pasta recém-criada quando o cadastro não pode ser persistido.
-- Validação do reinício do worker após edição, com rollback e diagnóstico explícito se a restauração falhar.
+- Edição bloqueada enquanto o MT5 estiver aberto ou seu worker permanecer ativo.
+- Rollback da renomeação e do cadastro se uma edição de terminal fechado falhar.
 - Testes automatizados para as novas condições de falha sem abrir MT5 real.

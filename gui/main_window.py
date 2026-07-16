@@ -264,6 +264,11 @@ class MarketHubBridge(QObject):
         if not profile:
             return fail("Terminal não encontrado.")
 
+        if self.terminal_manager.is_running(terminal_id, profile) or self.worker_manager.is_running(
+            terminal_id
+        ):
+            return fail("Feche o MT5 e pare a leitura antes de editar este terminal.")
+
         validation = self._validate_terminal_fields(label, broker_name, account_login)
         if validation:
             return fail(validation)
@@ -279,16 +284,9 @@ class MarketHubBridge(QObject):
         old_profile = replace(profile)
         old_dir = Path(profile.instance_dir).resolve()
         new_slug = self.terminal_manager.build_instance_slug(broker_name, account_login)
-        worker_was_running = self.worker_manager.is_running(terminal_id)
-        terminal_was_running = self.terminal_manager.is_running(terminal_id, profile)
         renamed_dir: Path | None = None
 
         try:
-            if worker_was_running:
-                self.worker_manager.stop_worker(terminal_id)
-            if terminal_was_running:
-                self.terminal_manager.stop(terminal_id, profile=profile)
-
             if new_slug != (profile.instance_slug or old_dir.name):
                 renamed_dir, terminal_exe = self.terminal_manager.rename_instance(profile, new_slug)
                 profile.instance_slug = new_slug
@@ -302,16 +300,6 @@ class MarketHubBridge(QObject):
             self.terminal_registry.upsert(profile)
             self.terminal_manager.remember(profile)
 
-            if terminal_was_running:
-                self.terminal_manager.launch(profile)
-            if worker_was_running:
-                worker_restored, worker_message = self._start_reading_for_profile(profile)
-                if not worker_restored:
-                    raise RuntimeError(
-                        "Não foi possível restaurar a leitura após editar o terminal: "
-                        f"{worker_message}"
-                    )
-
             self._emit_terminals()
             self._emit_live_streams()
             return ok(profile.to_dict(), "Dados atualizados e pasta da instância ajustada automaticamente.")
@@ -319,26 +307,10 @@ class MarketHubBridge(QObject):
             logger.exception("Erro ao editar terminal")
             rollback_message = ""
             try:
-                if terminal_was_running:
-                    self.terminal_manager.stop(terminal_id, profile=profile)
                 if renamed_dir is not None:
                     self.terminal_manager.rollback_rename(renamed_dir, old_dir)
                 self.terminal_registry.upsert(old_profile)
                 self.terminal_manager.remember(old_profile)
-                if terminal_was_running:
-                    self.terminal_manager.launch(old_profile)
-                if worker_was_running:
-                    worker_restored, worker_message = self._start_reading_for_profile(old_profile)
-                    if not worker_restored:
-                        rollback_message = (
-                            " A edição foi desfeita, mas não foi possível restaurar a leitura "
-                            f"anterior: {worker_message}"
-                        )
-                        logger.error(
-                            "Falha ao restaurar o worker anterior do terminal %s após rollback: %s",
-                            terminal_id,
-                            worker_message,
-                        )
             except Exception as rollback_error:
                 logger.exception("Falha ao desfazer edição do terminal")
                 rollback_message = (

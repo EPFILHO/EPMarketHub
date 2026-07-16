@@ -2,7 +2,7 @@
 
 Aplicativo desktop local para organizar instâncias controladas do MetaTrader 5 e ler dados de mercado por meio da biblioteca Python `MetaTrader5`.
 
-Esta versão continua o endurecimento da baseline funcional 0.4.7 sem introduzir funcionalidades novas. Ela corrige o estado de ações globais da interface e melhora a recuperação de falhas ao cadastrar ou editar terminais. A parte mais importante do projeto permanece preservada: até 3 terminais MT5 podem ficar abertos e conectados ao mesmo tempo, cada um em um processo Python independente.
+Esta versão continua o endurecimento da baseline funcional 0.4.7 sem introduzir funcionalidades novas. Ela corrige o estado de ações globais, bloqueia a edição de terminais ativos e melhora a recuperação de falhas ao cadastrar ou editar terminais fechados. A parte mais importante do projeto permanece preservada: até 3 terminais MT5 podem ficar abertos e conectados ao mesmo tempo, cada um em um processo Python independente.
 
 ## Estado da base
 

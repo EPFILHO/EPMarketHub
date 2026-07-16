@@ -297,6 +297,7 @@ function renderTerminals(rows) {
       : (waitingConnection
           ? 'Aguardando o MT5 confirmar login e conexão com a corretora'
           : ((!worker.alive && activeWorkerCount >= maxActive) ? limitTitle : ''));
+    const editBlocked = Boolean(t.running || worker.alive);
     const selected = selectedTerminalIds.has(t.id);
     return `
       <div class="terminal-item ${selected ? 'selected' : ''}" id="terminalItem-${escapeHtml(t.id)}" data-terminal-id="${escapeHtml(t.id)}">
@@ -320,7 +321,9 @@ function renderTerminals(rows) {
         <small class="muted path">${escapeHtml(t.terminal_exe || '')}</small>
         <div class="worker-detail">${terminalWorkerDetailHtml(worker)}</div>
         <div class="actions">
-          <button onclick="openEditTerminal('${escapeJs(t.id)}')">Editar</button>
+          <button data-role="edit-button" onclick="openEditTerminal('${escapeJs(t.id)}')"
+                  ${editBlocked ? 'disabled' : ''}
+                  title="${editBlocked ? 'Feche o MT5 e pare a leitura antes de editar' : 'Edita o cadastro do terminal'}">Editar</button>
           <button data-role="open-button" onclick="launchTerminal('${escapeJs(t.id)}')"
                   ${t.running || openBlocked ? 'disabled' : ''}
                   title="${t.running ? 'MT5 já está aberto' : (openBlocked ? limitTitle : 'Abre o MT5 e inicia a leitura')}">Abrir MT5</button>
@@ -369,6 +372,15 @@ function updateTerminalWorkerRows() {
       setTextIfChanged(workerBadge, workerLabel(worker.state));
     }
     setHtmlIfChanged(item.querySelector('.worker-detail'), terminalWorkerDetailHtml(worker));
+
+    const editButton = item.querySelector('[data-role="edit-button"]');
+    if (editButton) {
+      const blocked = Boolean(t.running || worker.alive);
+      editButton.disabled = blocked;
+      editButton.title = blocked
+        ? 'Feche o MT5 e pare a leitura antes de editar'
+        : 'Edita o cadastro do terminal';
+    }
 
     const limitTitle = `Limite de ${maxActive} MT5 simultâneos atingido`;
     const openButton = item.querySelector('[data-role="open-button"]');

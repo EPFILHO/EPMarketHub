@@ -21,14 +21,15 @@
 10. Pare a leitura de apenas um terminal e confirme que os outros continuam.
 11. Feche o app pelo X e confirme que os MT5 controlados também fecham.
 
-## Ações globais e edição ativa
+## Ações globais e edição segura
 
 1. Com todas as leituras paradas, confirme que **Parar leituras** está desativado.
 2. Inicie a leitura de um terminal e confirme que **Parar leituras** é habilitado.
 3. Clique em **Atualizar** e confirme o texto temporário **Atualizando...**, sem abrir ou fechar MT5.
-4. Edite somente o apelido de um terminal aberto e conectado.
-5. Confirme que o MT5 e a leitura voltam e que os demais terminais não são afetados.
-6. Repita alterando corretora ou conta e confirme que a pasta é renomeada e a leitura volta.
+4. Com um terminal aberto ou lendo, confirme que **Editar** está desativado.
+5. Feche o MT5, confirme que a leitura está parada e edite somente o apelido.
+6. Confirme que o cadastro foi atualizado sem abrir o MT5 e sem alterar o nome da pasta.
+7. Ainda com o terminal fechado, altere corretora ou conta e confirme que a pasta é renomeada.
 
 ## Exclusão
 

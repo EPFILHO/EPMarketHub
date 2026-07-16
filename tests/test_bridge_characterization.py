@@ -1,5 +1,4 @@
 import json
-import logging
 import sys
 from pathlib import Path
 from types import ModuleType
@@ -123,6 +122,8 @@ class FakeTerminalManager:
         self.stopped = []
         self.remembered = []
         self.created = []
+        self.renamed = []
+        self.rolled_back_renames = []
 
     @staticmethod
     def build_instance_slug(broker_name: str, account_login: str) -> str:
@@ -151,6 +152,14 @@ class FakeTerminalManager:
         self.created.append(slug)
         return Path("sandbox") / slug / "terminal64.exe"
 
+    def rename_instance(self, profile: TerminalProfile, new_slug: str) -> tuple[Path, Path]:
+        self.renamed.append((profile.id, new_slug))
+        target = Path(profile.instance_dir).parent / new_slug
+        return target, target / "terminal64.exe"
+
+    def rollback_rename(self, current_dir: Path, original_dir: Path) -> None:
+        self.rolled_back_renames.append((current_dir, original_dir))
+
 
 class FakeWorkerManager:
     max_workers = 3
@@ -159,7 +168,6 @@ class FakeWorkerManager:
         self.running_ids = set()
         self.started = []
         self.stopped = []
-        self.start_results = []
 
     def active_count(self) -> int:
         return len(self.running_ids)
@@ -169,11 +177,6 @@ class FakeWorkerManager:
 
     def start_worker(self, profile: TerminalProfile, symbols) -> tuple[bool, str]:
         self.started.append(profile.id)
-        if self.start_results:
-            started, message = self.start_results.pop(0)
-            if started:
-                self.running_ids.add(profile.id)
-            return started, message
         if profile.id in self.running_ids:
             return False, "A leitura deste terminal já está ativa."
         if self.active_count() >= self.max_workers:
@@ -300,15 +303,10 @@ def test_create_terminal_removes_new_instance_if_registry_save_fails(tmp_path: P
     assert list(instances_dir.iterdir()) == []
 
 
-def test_update_terminal_rolls_back_if_worker_does_not_restart(tmp_path: Path) -> None:
+def test_update_terminal_rejects_open_mt5(tmp_path: Path) -> None:
     bridge, terminal_manager, worker_manager = build_bridge(tmp_path, ["one"])
     original = bridge.terminal_registry.get("one")
     terminal_manager.open_ids.add("one")
-    worker_manager.running_ids.add("one")
-    worker_manager.start_results = [
-        (False, "falha simulada no novo worker"),
-        (True, "worker anterior restaurado"),
-    ]
 
     response = json.loads(
         bridge.updateTerminal(
@@ -321,40 +319,88 @@ def test_update_terminal_rolls_back_if_worker_does_not_restart(tmp_path: Path) -
 
     restored = bridge.terminal_registry.get("one")
     assert response["ok"] is False
-    assert "Não foi possível restaurar a leitura após editar" in response["message"]
+    assert response["message"] == "Feche o MT5 e pare a leitura antes de editar este terminal."
     assert restored.label == original.label
-    assert worker_manager.running_ids == {"one"}
-    assert worker_manager.started == ["one", "one"]
-    assert terminal_manager.stopped == ["one", "one"]
+    assert terminal_manager.stopped == []
+    assert worker_manager.stopped == []
 
 
-def test_update_terminal_reports_failure_to_restore_previous_worker(
-    tmp_path: Path,
-    caplog,
-) -> None:
+def test_update_terminal_rejects_active_worker_with_mt5_state_stale(tmp_path: Path) -> None:
     bridge, terminal_manager, worker_manager = build_bridge(tmp_path, ["one"])
     original = bridge.terminal_registry.get("one")
-    terminal_manager.open_ids.add("one")
     worker_manager.running_ids.add("one")
-    worker_manager.start_results = [
-        (False, "falha simulada no novo worker"),
-        (False, "falha simulada no worker anterior"),
-    ]
 
-    with caplog.at_level(logging.ERROR):
-        response = json.loads(
-            bridge.updateTerminal(
-                "one",
-                "Apelido alterado",
-                original.broker_name,
-                original.account_login,
-            )
+    response = json.loads(
+        bridge.updateTerminal(
+            "one",
+            "Apelido alterado",
+            original.broker_name,
+            original.account_login,
         )
+    )
 
     assert response["ok"] is False
-    assert "não foi possível restaurar a leitura anterior" in response["message"]
-    assert "Falha ao restaurar o worker anterior do terminal one" in caplog.text
-    assert worker_manager.running_ids == set()
+    assert response["message"] == "Feche o MT5 e pare a leitura antes de editar este terminal."
+    assert worker_manager.running_ids == {"one"}
+    assert terminal_manager.stopped == []
+    assert worker_manager.stopped == []
+
+
+def test_update_terminal_renames_instance_when_fully_stopped(tmp_path: Path) -> None:
+    bridge, terminal_manager, worker_manager = build_bridge(tmp_path, ["one"])
+
+    response = json.loads(
+        bridge.updateTerminal(
+            "one",
+            "Apelido alterado",
+            "Broker Atualizado",
+            "FAKE-UPDATED",
+        )
+    )
+
+    updated = bridge.terminal_registry.get("one")
+    assert response["ok"] is True
+    assert updated.label == "Apelido alterado"
+    assert updated.instance_slug == "BROKER-ATUALIZADO-FAKE-UPDATED"
+    assert terminal_manager.renamed == [("one", "BROKER-ATUALIZADO-FAKE-UPDATED")]
+    assert terminal_manager.stopped == []
+    assert worker_manager.started == []
+
+
+def test_update_terminal_rolls_back_rename_if_registry_save_fails(tmp_path: Path) -> None:
+    bridge, terminal_manager, _ = build_bridge(tmp_path, ["one"])
+    original = bridge.terminal_registry.get("one")
+    original_save = bridge.terminal_registry._save
+    save_attempts = 0
+
+    def fail_first_save(rows) -> None:
+        nonlocal save_attempts
+        save_attempts += 1
+        if save_attempts == 1:
+            raise OSError("falha simulada ao salvar edição")
+        original_save(rows)
+
+    bridge.terminal_registry._save = fail_first_save
+
+    response = json.loads(
+        bridge.updateTerminal(
+            "one",
+            "Apelido alterado",
+            "Broker Atualizado",
+            "FAKE-UPDATED",
+        )
+    )
+
+    restored = bridge.terminal_registry.get("one")
+    assert response["ok"] is False
+    assert "falha simulada ao salvar edição" in response["message"]
+    assert restored.label == original.label
+    assert restored.broker_name == original.broker_name
+    assert restored.account_login == original.account_login
+    assert restored.instance_slug == original.instance_slug
+    assert restored.instance_dir == original.instance_dir
+    assert len(terminal_manager.rolled_back_renames) == 1
+    assert save_attempts == 2
 
 
 class CountingTimer:

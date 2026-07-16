@@ -79,7 +79,7 @@ O supervisor impede worker duplicado para o mesmo terminal ou executável e limi
 | Dados de runtime e executável podiam ser rastreados por engano. | Mitigado na 0.4.8 com `.gitignore` e exemplos seguros. |
 | Cobertura automatizada pequena para limites, seleção, aliases e shutdown. | Ampliada na 0.4.8 com fakes multiplataforma. |
 | Pasta podia ficar órfã se a criação funcionasse e a persistência falhasse. | Corrigido na 0.4.9 com rollback restrito à área controlada. |
-| Edição ignorava o resultado real do reinício do worker. | Corrigido na 0.4.9 com validação, compensação e diagnóstico. |
+| Edição ativa exigia fechar, renomear, relançar e restaurar o worker. | Eliminado na 0.4.9: edição só é aceita com MT5 fechado e worker parado. |
 | Ações globais não refletiam sempre o estado dos workers. | Corrigido parcialmente na 0.4.9; faltam testes automatizados do DOM. |
 | `MarketHubBridge` concentra persistência, processos, slots e payloads. | Pendente; divisão exige aprovação e caracterização prévia. |
 | `web/app.js` concentra estado, renderização, eventos e comunicação. | Pendente; divisão exige aprovação e caracterização prévia. |
@@ -120,7 +120,7 @@ O supervisor impede worker duplicado para o mesmo terminal ou executável e limi
 - Login manual e reconexão com servidores de corretoras diferentes.
 - Três processos Python com três conexões `MetaTrader5` simultâneas e PIDs distintos.
 - Detecção e fechamento de `terminal64.exe` aberto pelo usuário.
-- Edição e renomeação de uma instância que estava aberta, seguida de restauração da leitura.
+- Bloqueio da edição com MT5 aberto e renomeação segura depois do fechamento.
 - Resolução real de símbolos, permissões de negociação, ticks e horários de mercado.
 - Encerramento pelo X, inclusive com workers conectando ou aguardando login.
 - Comportamento do QWebEngine/WebChannel empacotado e em modo de renderização segura.
@@ -128,7 +128,7 @@ O supervisor impede worker duplicado para o mesmo terminal ou executável e limi
 ## Plano incremental recomendado
 
 1. **0.4.8 — higiene e caracterização básica:** proteger dados locais, ampliar fakes e zerar Ruff. Concluído.
-2. **0.4.9 — confiabilidade localizada:** alinhar ações globais, validar restauração e compensar falhas parciais. Concluído nesta branch.
+2. **0.4.9 — confiabilidade localizada:** alinhar ações globais, bloquear edição ativa e compensar falhas parciais. Concluído nesta branch.
 3. **Caracterização de estados:** cobrir transições e contratos de payload/DOM sem mudar arquitetura.
 4. **Primeira extração da bridge:** somente após aprovação, mover um caso de uso sem alterar slots nem payloads.
 5. **Primeira extração do JavaScript:** somente após aprovação, separar estado/renderização preservando eventos e aparência.
