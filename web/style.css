@@ -108,6 +108,8 @@ button.danger { border-color: rgba(255,107,107,.32); color: #ff9797; background:
 .proof-banner {
   margin: 4px 0 16px;
   padding: 12px 14px;
+  min-height: 68px;
+  line-height: 1.45;
   border: 1px solid var(--line);
   border-radius: 14px;
   background: rgba(255,255,255,.035);
