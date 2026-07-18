@@ -368,7 +368,7 @@ def test_terminal_getter_dispatches_restart_event_instead_of_discarding_it(
     assert terminal_manager.launch_minimized == [True]
 
 
-def test_missing_instance_is_exposed_and_cannot_be_opened_or_deleted_normally(
+def test_missing_instance_cannot_be_opened_but_confirmed_delete_removes_registration(
     tmp_path: Path,
 ) -> None:
     bridge, terminal_manager, _ = build_bridge(tmp_path, ["one"])
@@ -381,7 +381,28 @@ def test_missing_instance_is_exposed_and_cannot_be_opened_or_deleted_normally(
     assert payload["instance_status"]["state"] == "directory_missing"
     assert launch_response["ok"] is False
     assert launch_response["data"]["reason"] == "instance_unavailable"
-    assert delete_response["ok"] is False
+    assert "Clique no botão Resolver" in launch_response["message"]
+    assert delete_response["ok"] is True
+    assert bridge.terminal_registry.get("one") is None
+
+
+def test_edit_missing_instance_returns_structured_resolver_instruction(tmp_path: Path) -> None:
+    bridge, terminal_manager, _ = build_bridge(tmp_path, ["one"])
+    terminal_manager.instance_states["one"] = "directory_missing"
+    original = bridge.terminal_registry.get("one")
+
+    response = json.loads(
+        bridge.updateTerminal(
+            "one",
+            original.label,
+            original.broker_name,
+            original.account_login,
+        )
+    )
+
+    assert response["ok"] is False
+    assert response["data"]["reason"] == "instance_unavailable"
+    assert "Clique no botão Resolver" in response["message"]
     assert bridge.terminal_registry.get("one") is not None
 
 
@@ -509,6 +530,163 @@ def test_create_terminal_removes_new_instance_if_registry_save_fails(tmp_path: P
     assert response["ok"] is False
     assert "falha simulada ao salvar cadastro" in response["message"]
     assert list(instances_dir.iterdir()) == []
+
+
+def test_create_detects_orphan_folder_and_adopts_it_without_overwriting_files(
+    tmp_path: Path,
+) -> None:
+    base_dir = tmp_path / "MT5"
+    instances_dir = tmp_path / "user_data" / "mt5_instances"
+    base_dir.mkdir()
+    (base_dir / "terminal64.exe").write_bytes(b"base-terminal")
+    terminal_manager = TerminalManager(instances_dir, base_dir)
+    terminal_exe = terminal_manager.create_instance_from_base("BROKER-SANDBOX-FAKE-NEW")
+    marker = terminal_exe.parent / "sessao-recuperada.dat"
+    marker.write_bytes(b"preservar")
+    registry = TerminalRegistry(tmp_path / "terminals.json")
+    bridge = MarketHubBridge(
+        terminal_registry=registry,
+        symbol_registry=FakeSymbolRegistry(),
+        terminal_manager=terminal_manager,
+        worker_manager=FakeWorkerManager(),
+    )
+
+    create_response = json.loads(
+        bridge.createTerminal("Recuperada", "Broker Sandbox", "FAKE-NEW")
+    )
+    adopt_response = json.loads(
+        bridge.adoptTerminalInstance("Recuperada", "Broker Sandbox", "FAKE-NEW")
+    )
+
+    assert create_response["ok"] is False
+    assert create_response["data"]["reason"] == "orphan_instance"
+    assert adopt_response["ok"] is True
+    assert marker.read_bytes() == b"preservar"
+    assert terminal_exe.read_bytes() == b"base-terminal"
+    assert registry.find_by_identity("Broker Sandbox", "FAKE-NEW") is not None
+
+
+def test_adopting_incomplete_orphan_repairs_executable_and_preserves_contents(
+    tmp_path: Path,
+) -> None:
+    base_dir = tmp_path / "MT5"
+    instances_dir = tmp_path / "user_data" / "mt5_instances"
+    base_dir.mkdir()
+    (base_dir / "terminal64.exe").write_bytes(b"base-terminal")
+    instance_dir = instances_dir / "BROKER-SANDBOX-FAKE-NEW"
+    instance_dir.mkdir(parents=True)
+    marker = instance_dir / "sessao-recuperada.dat"
+    marker.write_bytes(b"preservar")
+    registry = TerminalRegistry(tmp_path / "terminals.json")
+    terminal_manager = TerminalManager(instances_dir, base_dir)
+    bridge = MarketHubBridge(
+        terminal_registry=registry,
+        symbol_registry=FakeSymbolRegistry(),
+        terminal_manager=terminal_manager,
+        worker_manager=FakeWorkerManager(),
+    )
+
+    response = json.loads(
+        bridge.adoptTerminalInstance("Recuperada", "Broker Sandbox", "FAKE-NEW")
+    )
+
+    assert response["ok"] is True
+    assert marker.read_bytes() == b"preservar"
+    assert (instance_dir / "terminal64.exe").read_bytes() == b"base-terminal"
+
+
+def test_create_handles_folder_restored_during_creation_as_orphan(
+    tmp_path: Path, monkeypatch
+) -> None:
+    base_dir = tmp_path / "MT5"
+    instances_dir = tmp_path / "user_data" / "mt5_instances"
+    base_dir.mkdir()
+    (base_dir / "terminal64.exe").write_bytes(b"base-terminal")
+    terminal_manager = TerminalManager(instances_dir, base_dir)
+    registry = TerminalRegistry(tmp_path / "terminals.json")
+    bridge = MarketHubBridge(
+        terminal_registry=registry,
+        symbol_registry=FakeSymbolRegistry(),
+        terminal_manager=terminal_manager,
+        worker_manager=FakeWorkerManager(),
+    )
+    instance_dir = instances_dir / "BROKER-SANDBOX-FAKE-NEW"
+
+    def restore_folder_then_fail(_instance_slug: str) -> Path:
+        instance_dir.mkdir()
+        (instance_dir / "terminal64.exe").write_bytes(b"restored-terminal")
+        raise FileExistsError("pasta restaurada durante a criação")
+
+    monkeypatch.setattr(
+        terminal_manager,
+        "create_instance_from_base",
+        restore_folder_then_fail,
+    )
+
+    response = json.loads(bridge.createTerminal("Recuperada", "Broker Sandbox", "FAKE-NEW"))
+
+    assert response["ok"] is False
+    assert response["data"]["reason"] == "orphan_instance"
+    assert (instance_dir / "terminal64.exe").read_bytes() == b"restored-terminal"
+    assert registry.list() == []
+
+
+def test_adoption_requires_orphan_mt5_to_be_closed(tmp_path: Path, monkeypatch) -> None:
+    base_dir = tmp_path / "MT5"
+    instances_dir = tmp_path / "user_data" / "mt5_instances"
+    base_dir.mkdir()
+    (base_dir / "terminal64.exe").write_bytes(b"base-terminal")
+    terminal_manager = TerminalManager(instances_dir, base_dir)
+    terminal_manager.create_instance_from_base("BROKER-SANDBOX-FAKE-NEW")
+    registry = TerminalRegistry(tmp_path / "terminals.json")
+    bridge = MarketHubBridge(
+        terminal_registry=registry,
+        symbol_registry=FakeSymbolRegistry(),
+        terminal_manager=terminal_manager,
+        worker_manager=FakeWorkerManager(),
+    )
+    monkeypatch.setattr(terminal_manager, "is_executable_running", lambda _path: True)
+
+    response = json.loads(
+        bridge.adoptTerminalInstance("Recuperada", "Broker Sandbox", "FAKE-NEW")
+    )
+
+    assert response["ok"] is False
+    assert response["message"] == "Feche o MT5 desta pasta antes de recuperar o cadastro."
+    assert registry.list() == []
+
+
+def test_confirmed_delete_removes_folder_with_missing_executable(tmp_path: Path) -> None:
+    base_dir = tmp_path / "MT5"
+    instances_dir = tmp_path / "user_data" / "mt5_instances"
+    base_dir.mkdir()
+    (base_dir / "terminal64.exe").write_bytes(b"base-terminal")
+    instance_dir = instances_dir / "BROKER-SANDBOX-FAKE-ONE"
+    instance_dir.mkdir(parents=True)
+    (instance_dir / "remaining-session.dat").write_bytes(b"runtime")
+    profile = TerminalProfile(
+        id="one",
+        label="Terminal one",
+        broker_name="Broker Sandbox",
+        account_login="FAKE-ONE",
+        instance_slug=instance_dir.name,
+        instance_dir=str(instance_dir),
+        terminal_exe=str(instance_dir / "terminal64.exe"),
+    )
+    registry = TerminalRegistry(tmp_path / "terminals.json")
+    registry.upsert(profile)
+    bridge = MarketHubBridge(
+        terminal_registry=registry,
+        symbol_registry=FakeSymbolRegistry(),
+        terminal_manager=TerminalManager(instances_dir, base_dir),
+        worker_manager=FakeWorkerManager(),
+    )
+
+    response = json.loads(bridge.deleteTerminal("one", "EXCLUIR"))
+
+    assert response["ok"] is True
+    assert registry.get("one") is None
+    assert not instance_dir.exists()
 
 
 def test_update_terminal_rejects_open_mt5(tmp_path: Path) -> None:

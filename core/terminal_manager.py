@@ -59,9 +59,12 @@ class TerminalManager:
         if not self._is_inside_instances(instance_dir):
             state = "invalid_path"
             message = "A pasta cadastrada não pertence à área controlada do EP Market Hub."
-        elif not instance_dir.is_dir():
+        elif not instance_dir.exists():
             state = "directory_missing"
             message = "A pasta local desta instância não foi encontrada."
+        elif not instance_dir.is_dir():
+            state = "invalid_path"
+            message = "O caminho esperado da instância existe, mas não é uma pasta."
         elif not terminal_exe.is_file():
             state = "executable_missing"
             message = "A pasta existe, mas o terminal64.exe não foi encontrado."
@@ -75,6 +78,18 @@ class TerminalManager:
             "terminal_exe": str(terminal_exe),
             "message": message,
         }
+
+    def instance_status_for_slug(self, instance_slug: str) -> dict:
+        slug = self.sanitize_id(instance_slug).upper()
+        instance_dir = (self.instances_dir / slug).resolve()
+        profile = TerminalProfile(
+            id="",
+            label=slug,
+            instance_slug=slug,
+            instance_dir=str(instance_dir),
+            terminal_exe=str(instance_dir / "terminal64.exe"),
+        )
+        return self.instance_status(profile)
 
     def remember(self, profile: TerminalProfile) -> None:
         self._known_profiles[profile.id] = profile
@@ -382,6 +397,9 @@ class TerminalManager:
             return bool(self._find_processes(profile))
         return False
 
+    def is_executable_running(self, terminal_exe: str | Path) -> bool:
+        return bool(self._find_processes_for_executable(terminal_exe))
+
     def _is_inside_instances(self, path: Path) -> bool:
         try:
             relative = path.resolve().relative_to(self.instances_dir)
@@ -396,8 +414,8 @@ class TerminalManager:
         except Exception:
             return str(path).lower()
 
-    def _find_processes(self, profile: TerminalProfile) -> list[psutil.Process]:
-        target = self._normalized(profile.terminal_exe)
+    def _find_processes_for_executable(self, terminal_exe: str | Path) -> list[psutil.Process]:
+        target = self._normalized(terminal_exe)
         found: list[psutil.Process] = []
         for process in psutil.process_iter(["pid", "exe", "name"]):
             try:
@@ -407,3 +425,6 @@ class TerminalManager:
             except (psutil.NoSuchProcess, psutil.AccessDenied, OSError):
                 continue
         return found
+
+    def _find_processes(self, profile: TerminalProfile) -> list[psutil.Process]:
+        return self._find_processes_for_executable(profile.terminal_exe)

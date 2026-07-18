@@ -80,13 +80,20 @@ assert.equal(fullWorkerCapacityActions.openBlocked, true);
 assert.equal(fullWorkerCapacityActions.readingBlocked, true);
 assert.equal(context.workerLabel('stopped'), 'desconectado');
 assert.equal(context.workerLabel(''), 'desconectado');
-assert.equal(context.workerLabel('reopening_terminal'), 'reabrindo MT5');
+assert.equal(context.workerLabel('reopening_terminal'), 'reconectando');
 assert.equal(
   context.terminalProcessLabel(
     { running: true, instance_status: { state: 'ready' } },
     { state: 'reopening_terminal' },
   ),
   'Reabrindo MT5',
+);
+assert.equal(
+  context.terminalProcessLabel(
+    { running: true, instance_status: { state: 'ready' } },
+    { state: 'reconnecting' },
+  ),
+  'MT5 sem comunicação',
 );
 assert.equal(
   context.terminalProcessLabel(

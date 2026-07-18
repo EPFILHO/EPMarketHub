@@ -11,6 +11,7 @@ let dashboardTerminalSignature = '';
 const SELECTED_TERMINALS_KEY = 'ep_market_hub_selected_terminals_v1';
 let selectedTerminalIds = new Set();
 let bulkCloseInProgress = false;
+let pendingOrphanCandidate = null;
 
 const LIVE_SLOT_IDS = ['live-1', 'live-2', 'live-3'];
 const LIVE_PREFERENCES = [
@@ -299,7 +300,7 @@ function workerLabel(state) {
     starting: 'iniciando',
     connected: 'conectado',
     waiting_login: 'aguardando login',
-    reopening_terminal: 'reabrindo MT5',
+    reopening_terminal: 'reconectando',
     reconnecting: 'reconectando',
     error: 'erro'
   };
@@ -327,12 +328,13 @@ function terminalProcessLabel(terminal, worker) {
   if (instanceState === 'executable_missing') return 'Executável ausente';
   if (instanceState === 'invalid_path') return 'Caminho inválido';
   if (worker?.state === 'reopening_terminal') return 'Reabrindo MT5';
+  if (worker?.state === 'reconnecting') return 'MT5 sem comunicação';
   return `MT5 ${terminal?.running ? 'aberto' : 'fechado'}`;
 }
 
 function terminalProcessBadgeClass(terminal, worker) {
   if (!terminalInstanceReady(terminal)) return 'bad';
-  if (worker?.state === 'reopening_terminal') return 'warn';
+  if (worker?.state === 'reopening_terminal' || worker?.state === 'reconnecting') return 'warn';
   return terminal?.running ? 'ok' : '';
 }
 
@@ -1013,12 +1015,75 @@ async function createTerminal() {
   const broker = document.getElementById('brokerName').value;
   const login = document.getElementById('accountLogin').value;
   const res = parseResponse(await bridge.createTerminal(label, broker, login));
-  toast(res.message, !res.ok);
   if (res.ok) {
+    toast(res.message, false);
     document.getElementById('terminalLabel').value = '';
     document.getElementById('brokerName').value = '';
     document.getElementById('accountLogin').value = '';
     await loadTerminals();
+  } else if (res.data?.reason === 'orphan_instance') {
+    openOrphanInstance(res.data);
+  } else {
+    toast(res.message, true);
+  }
+}
+
+function setOrphanInstanceMessage(message = '') {
+  const element = document.getElementById('orphanInstanceMessage');
+  element.textContent = message;
+  element.classList.toggle('hidden', !message);
+}
+
+function openOrphanInstance(data) {
+  pendingOrphanCandidate = data?.candidate || null;
+  const status = data?.instance_status || {};
+  if (!pendingOrphanCandidate) return toast('Não foi possível identificar a pasta existente.', true);
+  document.getElementById('orphanInstanceDetails').innerHTML = `
+    <strong>${escapeHtml(pendingOrphanCandidate.label || pendingOrphanCandidate.instance_slug || 'Instância existente')}</strong>
+    <span>Corretora: ${escapeHtml(pendingOrphanCandidate.broker_name || '—')}</span>
+    <span>Conta: ${escapeHtml(pendingOrphanCandidate.account_login || '—')}</span>
+    <span>Diagnóstico: ${escapeHtml(status.message || 'Pasta local encontrada.')}</span>
+    <span>Pasta: ${escapeHtml(status.path || '—')}</span>
+  `;
+  setOrphanInstanceMessage();
+  document.getElementById('orphanInstanceModal').classList.remove('hidden');
+}
+
+function closeOrphanInstance() {
+  document.getElementById('orphanInstanceModal').classList.add('hidden');
+  setOrphanInstanceMessage();
+  pendingOrphanCandidate = null;
+}
+
+async function adoptOrphanInstance() {
+  if (!pendingOrphanCandidate) return;
+  const button = document.getElementById('btnAdoptOrphanInstance');
+  button.disabled = true;
+  button.textContent = 'Recuperando...';
+  setOrphanInstanceMessage();
+  try {
+    const candidate = pendingOrphanCandidate;
+    const res = parseResponse(await bridge.adoptTerminalInstance(
+      candidate.label,
+      candidate.broker_name,
+      candidate.account_login,
+    ));
+    if (res.ok) {
+      toast(res.message, false);
+      closeOrphanInstance();
+      document.getElementById('terminalLabel').value = '';
+      document.getElementById('brokerName').value = '';
+      document.getElementById('accountLogin').value = '';
+      await loadTerminals();
+      await loadWorkerStates();
+    } else {
+      setOrphanInstanceMessage(res.message);
+    }
+  } catch (error) {
+    setOrphanInstanceMessage(error?.message || 'Falha inesperada ao recuperar o cadastro.');
+  } finally {
+    button.disabled = false;
+    button.textContent = 'Usar pasta existente';
   }
 }
 
@@ -1066,11 +1131,16 @@ async function saveTerminalEdit() {
   setEditTerminalMessage();
   try {
     const res = parseResponse(await bridge.updateTerminal(id, label, broker, login));
-    toast(res.message, !res.ok);
     if (res.ok) {
+      toast(res.message, false);
       closeEditTerminal();
       await loadTerminals();
       await loadWorkerStates();
+    } else if (res.data?.reason === 'instance_unavailable') {
+      closeEditTerminal();
+      await loadWorkerStates();
+      await loadTerminals();
+      openInstanceResolution(id);
     } else {
       setEditTerminalMessage(res.message || 'Não foi possível salvar as alterações.');
       await loadWorkerStates();
@@ -1079,7 +1149,6 @@ async function saveTerminalEdit() {
   } catch (error) {
     const message = error?.message || 'Falha inesperada ao salvar as alterações.';
     setEditTerminalMessage(message);
-    toast(message, true);
   } finally {
     button.disabled = false;
     button.textContent = 'Salvar alterações';
@@ -1422,6 +1491,7 @@ window.addEventListener('DOMContentLoaded', () => {
       closeEditTerminal();
       closeDeleteTerminal();
       closeInstanceResolution();
+      closeOrphanInstance();
     }
   });
   document.querySelectorAll('.nav-item').forEach(btn => btn.addEventListener('click', () => switchView(btn.dataset.view)));
@@ -1430,10 +1500,12 @@ window.addEventListener('DOMContentLoaded', () => {
   document.querySelectorAll('[data-close-edit]').forEach(el => el.addEventListener('click', closeEditTerminal));
   document.querySelectorAll('[data-close-delete]').forEach(el => el.addEventListener('click', closeDeleteTerminal));
   document.querySelectorAll('[data-close-instance-resolution]').forEach(el => el.addEventListener('click', closeInstanceResolution));
+  document.querySelectorAll('[data-close-orphan]').forEach(el => el.addEventListener('click', closeOrphanInstance));
   document.getElementById('deleteTerminalConfirmation').addEventListener('input', updateDeleteConfirmationState);
   document.getElementById('btnConfirmDeleteTerminal').addEventListener('click', confirmDeleteTerminal);
   document.getElementById('btnRecreateTerminalInstance').addEventListener('click', recreateTerminalInstance);
   document.getElementById('btnRemoveMissingTerminal').addEventListener('click', removeMissingTerminal);
+  document.getElementById('btnAdoptOrphanInstance').addEventListener('click', adoptOrphanInstance);
   document.getElementById('btnReloadTerminals').addEventListener('click', reloadTerminals);
   document.getElementById('btnReloadSymbols').addEventListener('click', loadSymbols);
   document.getElementById('btnOpenSelected').addEventListener('click', openSelectedTerminals);

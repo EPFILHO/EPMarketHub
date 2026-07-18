@@ -83,10 +83,19 @@ class MT5Connector:
         if account is None:
             code, msg = mt5.last_error()
             suffix = f" ({code} - {msg})" if code or msg else ""
+            error_text = str(msg or "").casefold()
+            communication_error = any(
+                marker in error_text
+                for marker in ("ipc", "send failed", "internal fail", "pipe")
+            )
             return TerminalConnectionStatus(
                 terminal_id=self.profile.id,
                 ok=False,
-                message="MT5 aberto, mas sem conta logada. Faça login manual no terminal." + suffix,
+                message=(
+                    "Comunicação com o MT5 foi interrompida; tentando reconectar." + suffix
+                    if communication_error
+                    else "MT5 aberto, mas sem conta logada. Faça login manual no terminal." + suffix
+                ),
                 terminal_path=self.profile.terminal_exe,
             )
 

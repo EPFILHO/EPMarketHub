@@ -112,7 +112,43 @@ class MarketHubBridge(QObject):
         if status["ready"]:
             return status, None
         return status, (
-            f"{status['message']} Escolha Recriar instância ou Remover cadastro para resolver."
+            f"{status['message']} Clique no botão Resolver para ver as opções."
+        )
+
+    def _remove_registration_only(self, profile: TerminalProfile, instance_status: dict) -> str:
+        self.worker_manager.clear_live_streams_for_terminal(profile.id)
+        if not self.terminal_registry.remove(profile.id):
+            return fail("Não foi possível remover o cadastro do terminal.")
+        self.worker_manager.forget_terminal(profile.id)
+        self.terminal_manager.forget(profile.id)
+        self._emit_terminals()
+        self._emit_live_streams()
+        return ok(
+            {"terminal_id": profile.id, "instance_status": instance_status},
+            "Cadastro local removido. Nenhuma pasta ou conta na corretora foi alterada.",
+        )
+
+    @staticmethod
+    def _orphan_instance_failure(
+        label: str,
+        broker_name: str,
+        account_login: str,
+        instance_slug: str,
+        instance_status: dict,
+    ) -> str:
+        return fail(
+            "Já existe uma pasta local com esse nome, mas ela não está cadastrada. "
+            "Escolha Usar pasta existente para recuperar o cadastro.",
+            {
+                "reason": "orphan_instance",
+                "instance_status": instance_status,
+                "candidate": {
+                    "label": label.strip(),
+                    "broker_name": broker_name.strip(),
+                    "account_login": account_login.strip(),
+                    "instance_slug": instance_slug,
+                },
+            },
         )
 
     def _terminals_payload(self) -> list[dict]:
@@ -159,6 +195,11 @@ class MarketHubBridge(QObject):
                 self.liveTickChanged.emit(json.dumps(data["tick"], ensure_ascii=False))
             elif event_type == "live_status":
                 should_emit_live = True
+            elif event_type == "status" and data.get("state") in {
+                "reconnecting",
+                "reopening_terminal",
+            }:
+                should_emit_terminals = True
             elif event_type == "terminal_restart_required":
                 terminal_id = str(event.get("terminal_id", ""))
                 profile = self.terminal_registry.get(terminal_id)
@@ -275,7 +316,28 @@ class MarketHubBridge(QObject):
                 )
 
             instance_slug = self.terminal_manager.build_instance_slug(broker_name, account_login)
-            terminal_exe = self.terminal_manager.create_instance_from_base(instance_slug)
+            candidate_status = self.terminal_manager.instance_status_for_slug(instance_slug)
+            if candidate_status["state"] != "directory_missing":
+                return self._orphan_instance_failure(
+                    label,
+                    broker_name,
+                    account_login,
+                    instance_slug,
+                    candidate_status,
+                )
+            try:
+                terminal_exe = self.terminal_manager.create_instance_from_base(instance_slug)
+            except FileExistsError:
+                candidate_status = self.terminal_manager.instance_status_for_slug(instance_slug)
+                if candidate_status["state"] != "directory_missing":
+                    return self._orphan_instance_failure(
+                        label,
+                        broker_name,
+                        account_login,
+                        instance_slug,
+                        candidate_status,
+                    )
+                raise
             profile = TerminalProfile(
                 id=uuid4().hex[:12],
                 label=label.strip(),
@@ -305,6 +367,64 @@ class MarketHubBridge(QObject):
             return ok(profile.to_dict(), "Terminal criado. Abra o MT5 e faça login manualmente na primeira vez.")
         except Exception as exc:
             logger.exception("Erro ao criar terminal")
+            return fail(str(exc))
+
+    @Slot(str, str, str, result=str)
+    def adoptTerminalInstance(self, label: str, broker_name: str, account_login: str) -> str:
+        validation = self._validate_terminal_fields(label, broker_name, account_login)
+        if validation:
+            return fail(validation)
+
+        duplicate = self.terminal_registry.find_by_identity(broker_name, account_login)
+        if duplicate:
+            return fail(
+                f"Já existe uma instância para {duplicate.broker_name} — conta {duplicate.account_login}."
+            )
+
+        instance_slug = self.terminal_manager.build_instance_slug(broker_name, account_login)
+        instance_status = self.terminal_manager.instance_status_for_slug(instance_slug)
+        if instance_status["state"] == "directory_missing":
+            return fail("A pasta local não existe mais. Tente criar a instância novamente.")
+        if instance_status["state"] == "invalid_path":
+            return fail(instance_status["message"])
+
+        target_dir = Path(instance_status["path"]).resolve()
+        for existing in self.terminal_registry.list():
+            if Path(existing.instance_dir).resolve() == target_dir:
+                return fail(
+                    f"A pasta local já pertence ao cadastro {existing.broker_name} — "
+                    f"conta {existing.account_login}."
+                )
+        if self.terminal_manager.is_executable_running(instance_status["terminal_exe"]):
+            return fail("Feche o MT5 desta pasta antes de recuperar o cadastro.")
+
+        profile = TerminalProfile(
+            id=uuid4().hex[:12],
+            label=label.strip(),
+            broker_name=broker_name.strip(),
+            account_login=account_login.strip(),
+            instance_slug=instance_slug,
+            instance_dir=instance_status["path"],
+            terminal_exe=instance_status["terminal_exe"],
+            portable=True,
+        )
+        try:
+            repaired = instance_status["state"] == "executable_missing"
+            if repaired:
+                terminal_exe = self.terminal_manager.repair_instance_from_base(profile)
+                profile.instance_dir = str(terminal_exe.parent)
+                profile.terminal_exe = str(terminal_exe)
+            self.terminal_registry.upsert(profile)
+            self.terminal_manager.remember(profile)
+            self._emit_terminals()
+            message = (
+                "Cadastro recuperado e terminal64.exe reparado. Abra o MT5 e confirme o login manual."
+                if repaired
+                else "Cadastro recuperado usando a pasta existente. Abra o MT5 para validar a sessão."
+            )
+            return ok(profile.to_dict(), message)
+        except Exception as exc:
+            logger.exception("Erro ao recuperar cadastro a partir de pasta existente")
             return fail(str(exc))
 
     @Slot(str, str, str, str, result=str)
@@ -466,12 +586,13 @@ class MarketHubBridge(QObject):
         ):
             return fail("Feche o MT5 e pare a leitura antes de excluir a instância local.")
 
-        instance_status, instance_error = self._instance_unavailable(profile)
-        if instance_error:
-            return fail(
-                instance_error,
-                {"reason": "instance_unavailable", "instance_status": instance_status},
-            )
+        instance_status = self.terminal_manager.instance_status(profile)
+        if instance_status["state"] in {"directory_missing", "invalid_path"}:
+            try:
+                return self._remove_registration_only(profile, instance_status)
+            except Exception as exc:
+                logger.exception("Erro ao remover cadastro sem pasta controlada")
+                return fail(str(exc))
 
         original_dir: Path | None = None
         staged_dir: Path | None = None
@@ -559,17 +680,7 @@ class MarketHubBridge(QObject):
             )
 
         try:
-            self.worker_manager.clear_live_streams_for_terminal(terminal_id)
-            if not self.terminal_registry.remove(terminal_id):
-                return fail("Não foi possível remover o cadastro do terminal.")
-            self.worker_manager.forget_terminal(terminal_id)
-            self.terminal_manager.forget(terminal_id)
-            self._emit_terminals()
-            self._emit_live_streams()
-            return ok(
-                {"terminal_id": terminal_id, "instance_status": instance_status},
-                "Cadastro local removido. Nenhuma pasta ou conta na corretora foi alterada.",
-            )
+            return self._remove_registration_only(profile, instance_status)
         except Exception as exc:
             logger.exception("Erro ao remover cadastro com instância ausente")
             return fail(str(exc))

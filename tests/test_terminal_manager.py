@@ -66,6 +66,20 @@ def test_instances_root_cannot_be_treated_as_a_terminal_instance(tmp_path: Path)
     assert manager.instance_status(profile)["state"] == "invalid_path"
 
 
+def test_existing_non_directory_instance_path_is_invalid(tmp_path: Path) -> None:
+    manager = build_manager(tmp_path)
+    instance_path = manager.instances_dir / "BROKER-FAKE"
+    instance_path.write_bytes(b"not-a-directory")
+    profile = TerminalProfile(
+        id="invalid",
+        label="Invalid",
+        instance_dir=str(instance_path),
+        terminal_exe=str(instance_path / "terminal64.exe"),
+    )
+
+    assert manager.instance_status(profile)["state"] == "invalid_path"
+
+
 def test_repair_instance_recreates_missing_directory_from_base(tmp_path: Path) -> None:
     manager = build_manager(tmp_path)
     instance_dir = manager.instances_dir / "BROKER-FAKE"
