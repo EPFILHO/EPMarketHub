@@ -1,8 +1,10 @@
-# EP Market Hub — Base 0.4.8
+# EP Market Hub — Base 0.4.9
 
 Aplicativo desktop local para organizar instâncias controladas do MetaTrader 5 e ler dados de mercado por meio da biblioteca Python `MetaTrader5`.
 
-Esta versão endurece a baseline funcional 0.4.7 sem introduzir funcionalidades novas. A parte mais importante do projeto permanece validada: até 3 terminais MT5 podem ficar abertos e conectados ao mesmo tempo, cada um em um processo Python independente.
+Esta versão continua o endurecimento da baseline funcional 0.4.7 sem introduzir funcionalidades novas. Ela corrige o estado de ações globais, bloqueia a edição de terminais ativos e melhora a recuperação de falhas ao cadastrar ou editar terminais fechados. A parte mais importante do projeto permanece preservada: até 3 terminais MT5 podem ficar abertos e conectados ao mesmo tempo, cada um em um processo Python independente.
+
+A baseline 0.4.9 foi validada manualmente no Windows em 17 de julho de 2026 com instâncias MT5 reais e conexões simultâneas, além das verificações automatizadas descritas na documentação.
 
 ## Estado da base
 
@@ -64,6 +66,8 @@ O MT5, ao ser aberto em modo portátil, cria os demais arquivos necessários den
 
 Os arquivos `user_data/terminals.json` e `user_data/symbols.json` são registros locais de runtime e não são versionados. Os modelos seguros `user_data/terminals.example.json` e `user_data/symbols.example.json` permanecem no repositório.
 
+Os caminhos das instâncias são persistidos relativamente à pasta de instalação. Ao mover a pasta completa do EP Market Hub, os registros são resolvidos novamente contra o novo local; caminhos absolutos de versões anteriores são migrados na próxima inicialização.
+
 Instâncias reais, logs, sessões do MT5, executáveis, credenciais e dados pessoais são protegidos pelo `.gitignore` e não devem ser adicionados manualmente ao Git.
 
 ## Estrutura
@@ -83,6 +87,7 @@ user_data/              Dados locais e instâncias isoladas.
 
 - `AGENTS.md`: regras para agentes/Codex trabalharem neste repositório.
 - `docs/ARCHITECTURE.md`: arquitetura atual.
+- `docs/BASELINE_AUDIT_0.4.7.md`: auditoria técnica da baseline validada.
 - `docs/CURRENT_STATUS.md`: o que funciona e o que ainda falta.
 - `docs/MANUAL_TESTS.md`: roteiro atual de testes manuais.
 - `docs/ROADMAP.md`: próximos módulos recomendados.

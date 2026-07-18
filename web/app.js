@@ -206,6 +206,40 @@ function selectedTerminalList() {
   return terminals.filter(t => selectedTerminalIds.has(t.id)).map(t => t.id);
 }
 
+function terminalBulkActionState(rows, selectedIds, states, maxActive) {
+  const selected = rows.filter(t => selectedIds.has(t.id));
+  const openCount = rows.filter(t => t.running).length;
+  const activeWorkerCount = rows.filter(t => (states[t.id] || t.worker || {}).alive).length;
+  const candidates = selected.filter(t => {
+    const worker = states[t.id] || t.worker || {};
+    return !t.running || !worker.alive;
+  });
+  const closeCandidates = selected.filter(t => {
+    const worker = states[t.id] || t.worker || {};
+    return t.running || worker.alive;
+  });
+  const neededOpenSlots = candidates.filter(t => !t.running).length;
+  const neededWorkerSlots = candidates.filter(t => !(states[t.id] || t.worker || {}).alive).length;
+  const availableOpenSlots = Math.max(0, maxActive - openCount);
+  const availableWorkerSlots = Math.max(0, maxActive - activeWorkerCount);
+  const exceedsCapacity = neededOpenSlots > availableOpenSlots
+    || neededWorkerSlots > availableWorkerSlots;
+
+  let openTitle = 'Abre os MT5 selecionados e inicia suas leituras';
+  if (!selected.length) openTitle = 'Selecione pelo menos um terminal';
+  else if (!candidates.length) openTitle = 'Todos os terminais selecionados já estão abertos com leitura ativa';
+  else if (exceedsCapacity) openTitle = `Não há vagas para abrir toda a seleção (limite de ${maxActive} MT5)`;
+
+  return {
+    openDisabled: candidates.length === 0 || exceedsCapacity,
+    closeDisabled: closeCandidates.length === 0,
+    openTitle,
+    closeTitle: closeCandidates.length
+      ? 'Fecha os MT5 selecionados e encerra suas leituras'
+      : 'Nenhum terminal aberto ou com leitura ativa está selecionado',
+  };
+}
+
 function updateSelectionUi() {
   const maxActive = Number(runtimeLimits.max_active_mt5 || 3);
   const validIds = new Set(terminals.map(t => t.id));
@@ -222,8 +256,15 @@ function updateSelectionUi() {
   setTextIfChanged(document.getElementById('selectionStatus'), `Selecionados: ${count} de ${maxActive}`);
   const openButton = document.getElementById('btnOpenSelected');
   const closeButton = document.getElementById('btnCloseSelected');
-  if (openButton) openButton.disabled = count === 0;
-  if (closeButton) closeButton.disabled = count === 0;
+  const state = terminalBulkActionState(terminals, selectedTerminalIds, workerStates, maxActive);
+  if (openButton) {
+    openButton.disabled = state.openDisabled;
+    openButton.title = state.openTitle;
+  }
+  if (closeButton) {
+    closeButton.disabled = state.closeDisabled;
+    closeButton.title = state.closeTitle;
+  }
 }
 
 function toggleTerminalSelection(terminalId, checked) {
@@ -297,6 +338,7 @@ function renderTerminals(rows) {
       : (waitingConnection
           ? 'Aguardando o MT5 confirmar login e conexão com a corretora'
           : ((!worker.alive && activeWorkerCount >= maxActive) ? limitTitle : ''));
+    const editBlocked = Boolean(t.running || worker.alive);
     const selected = selectedTerminalIds.has(t.id);
     return `
       <div class="terminal-item ${selected ? 'selected' : ''}" id="terminalItem-${escapeHtml(t.id)}" data-terminal-id="${escapeHtml(t.id)}">
@@ -320,14 +362,15 @@ function renderTerminals(rows) {
         <small class="muted path">${escapeHtml(t.terminal_exe || '')}</small>
         <div class="worker-detail">${terminalWorkerDetailHtml(worker)}</div>
         <div class="actions">
-          <button onclick="openEditTerminal('${escapeJs(t.id)}')">Editar</button>
+          <button data-role="edit-button" onclick="openEditTerminal('${escapeJs(t.id)}')"
+                  ${editBlocked ? 'disabled' : ''}
+                  title="${editBlocked ? 'Feche o MT5 e pare a leitura antes de editar' : 'Edita o cadastro do terminal'}">Editar</button>
           <button data-role="open-button" onclick="launchTerminal('${escapeJs(t.id)}')"
                   ${t.running || openBlocked ? 'disabled' : ''}
                   title="${t.running ? 'MT5 já está aberto' : (openBlocked ? limitTitle : 'Abre o MT5 e inicia a leitura')}">Abrir MT5</button>
           <button data-role="reading-button" class="${worker.connected ? '' : 'success'}"
                   onclick="toggleReading('${escapeJs(t.id)}')" ${readingBlocked ? 'disabled' : ''}
                   title="${readingTitle}">${readingLabel}</button>
-          <button data-role="snapshot-button" onclick="refreshSnapshot('${escapeJs(t.id)}')" ${worker.connected ? '' : 'disabled'}>Snapshot</button>
           <button data-role="reconnect-button" onclick="reconnectWorker('${escapeJs(t.id)}')" ${worker.connected ? '' : 'disabled'}>Reconectar</button>
           <button data-role="close-button" class="danger" onclick="stopTerminal('${escapeJs(t.id)}')" ${t.running ? '' : 'disabled'}>Fechar MT5</button>
           <button data-role="delete-button" class="danger" onclick="openDeleteTerminal('${escapeJs(t.id)}')" ${t.running ? 'disabled' : ''} title="${t.running ? 'Feche o MT5 antes de excluir a instância' : 'Exclui o cadastro e a pasta local da instância'}">Excluir</button>
@@ -370,6 +413,15 @@ function updateTerminalWorkerRows() {
     }
     setHtmlIfChanged(item.querySelector('.worker-detail'), terminalWorkerDetailHtml(worker));
 
+    const editButton = item.querySelector('[data-role="edit-button"]');
+    if (editButton) {
+      const blocked = Boolean(t.running || worker.alive);
+      editButton.disabled = blocked;
+      editButton.title = blocked
+        ? 'Feche o MT5 e pare a leitura antes de editar'
+        : 'Edita o cadastro do terminal';
+    }
+
     const limitTitle = `Limite de ${maxActive} MT5 simultâneos atingido`;
     const openButton = item.querySelector('[data-role="open-button"]');
     if (openButton) {
@@ -399,8 +451,6 @@ function updateTerminalWorkerRows() {
             : ((!worker.alive && activeWorkerCount >= maxActive) ? limitTitle : ''));
     }
 
-    const snapshotButton = item.querySelector('[data-role="snapshot-button"]');
-    if (snapshotButton) snapshotButton.disabled = !worker.connected;
     const reconnectButton = item.querySelector('[data-role="reconnect-button"]');
     if (reconnectButton) reconnectButton.disabled = !worker.connected;
     const closeButton = item.querySelector('[data-role="close-button"]');
@@ -419,6 +469,7 @@ function applyWorkerStates(rows) {
   (rows || []).forEach(row => { workerStates[row.terminal_id] = row; });
   terminals = terminals.map(t => ({ ...t, worker: workerStates[t.id] || t.worker }));
   updateTerminalWorkerRows();
+  updateSelectionUi();
   updateWorkersStatus();
   refreshDashboardTerminalSources();
   renderWorkerSummary();
@@ -434,6 +485,11 @@ function updateWorkersStatus() {
   const limit = Number(runtimeLimits.max_active_mt5 || 3);
   el.textContent = `Leituras: ${connected} conectadas · ${alive}/${limit} ativas`;
   el.classList.toggle('ok', connected > 0);
+  const stopAllButton = document.getElementById('btnStopAll');
+  stopAllButton.disabled = alive === 0;
+  stopAllButton.title = alive === 0
+    ? 'Nenhuma leitura ativa para encerrar'
+    : `Encerra as ${alive} leitura(s) ativa(s)`;
 }
 
 function renderWorkerSummary() {
@@ -488,12 +544,24 @@ function renderSymbols(rows) {
   populateLiveSymbolSelectors();
 }
 
+function liveTerminalSelection(row, before, selectionTouched, connected, fallbackIndex) {
+  const configuredId = String(row?.config?.terminal_id || '');
+  const connectedIds = new Set(connected.map(t => t.id));
+  if (selectionTouched && connectedIds.has(before)) return before;
+  if (configuredId) return configuredId;
+  if (connectedIds.has(before)) return before;
+  return connected[fallbackIndex]?.id || '';
+}
+
 function populateLiveTerminalSelectors() {
   const connected = connectedTerminals();
   for (let i = 1; i <= 3; i++) {
     const select = document.getElementById(`liveTerminal${i}`);
     if (!select) continue;
     const before = select.value;
+    const row = liveStreams[`live-${i}`] || {};
+    const configuredId = String(row?.config?.terminal_id || '');
+    const selectionTouched = select.dataset.selectionTouched === '1';
     select.innerHTML = '<option value="">Selecione um terminal conectado...</option>';
     connected.forEach(t => {
       const opt = document.createElement('option');
@@ -501,14 +569,19 @@ function populateLiveTerminalSelectors() {
       opt.textContent = `${t.label || t.id}${t.broker_name ? ` · ${t.broker_name}` : ''}`;
       select.appendChild(opt);
     });
-    if (connected.some(t => t.id === before)) {
-      select.value = before;
-    } else if (connected[i - 1]) {
-      select.value = connected[i - 1].id;
-    } else {
-      select.value = '';
+
+    if (configuredId && !connected.some(t => t.id === configuredId)) {
+      const profile = terminals.find(t => t.id === configuredId);
+      const opt = document.createElement('option');
+      opt.value = configuredId;
+      opt.disabled = true;
+      opt.textContent = `${profile?.label || row.config?.terminal_label || configuredId} · MT5 fechado`;
+      select.appendChild(opt);
     }
+
+    select.value = liveTerminalSelection(row, before, selectionTouched, connected, i - 1);
     refreshEnhancedSelect(select);
+    updateLiveSlotAction(i);
   }
 }
 
@@ -528,11 +601,13 @@ function populateLiveSymbolSelectors() {
     if (enabled.some(s => s.id === before)) {
       select.value = before;
       refreshEnhancedSelect(select);
+      updateLiveSlotAction(i);
       continue;
     }
     const preferred = LIVE_PREFERENCES[i - 1].find(id => enabled.some(s => s.id === id));
     if (preferred) select.value = preferred;
     refreshEnhancedSelect(select);
+    updateLiveSlotAction(i);
   }
 }
 
@@ -598,6 +673,7 @@ function applyLiveStreams(payload) {
     if (active && row?.tick) liveTicks[slotId] = row.tick;
     else if (!active || !row?.tick) delete liveTicks[slotId];
   });
+  populateLiveTerminalSelectors();
   for (let i = 1; i <= 3; i++) renderLiveSlot(i);
   updateLiveProof();
 }
@@ -620,11 +696,60 @@ function receiveLiveTick(tick) {
   updateLiveProof();
 }
 
+function liveSlotActionState(row, terminalId, symbolId) {
+  const configured = Boolean(row?.config);
+  const selectionComplete = Boolean(terminalId && symbolId);
+  if (!configured) {
+    return { disabled: !selectionComplete, label: 'Iniciar', changed: false };
+  }
+
+  const configuredTerminal = String(row.config?.terminal_id || '');
+  const configuredSymbol = String(row.config?.symbol?.id || '');
+  const changed = selectionComplete
+    && (terminalId !== configuredTerminal || symbolId !== configuredSymbol);
+  return { disabled: !changed, label: changed ? 'Alterar' : 'Iniciar', changed };
+}
+
+function updateLiveSlotAction(slotNumber) {
+  const button = document.querySelector(`[data-live-start="${slotNumber}"]`);
+  const terminalId = document.getElementById(`liveTerminal${slotNumber}`)?.value || '';
+  const symbolId = document.getElementById(`liveSymbol${slotNumber}`)?.value || '';
+  if (!button) return;
+  const state = liveSlotActionState(liveStreams[`live-${slotNumber}`] || {}, terminalId, symbolId);
+  button.disabled = state.disabled;
+  setTextIfChanged(button, state.label);
+  button.title = state.changed
+    ? 'Aplica o novo terminal ou ativo a este fluxo'
+    : (state.disabled ? 'Esta configuração já está aplicada' : 'Inicia este fluxo');
+}
+
+function liveSlotIssueDetails(row, tick, slotNumber) {
+  if (!row?.config && !tick) return null;
+  const status = row?.status || {};
+  if (['stopped', 'worker_stopped'].includes(status.state)) return null;
+  const receivedAge = tick ? ageSeconds(tick.received_at) : Infinity;
+  if (tick && receivedAge < 2.0) return null;
+  return {
+    slotNumber,
+    terminalLabel: tick?.terminal_label || status.terminal_label || row?.config?.terminal_label || 'terminal não identificado',
+    symbolName: tick?.name || status.name || row?.config?.symbol?.name || 'ativo não identificado',
+    detail: tick
+      ? `leitura atrasada; último retorno ${formatAge(receivedAge)}`
+      : (status.message || 'aguardando a primeira leitura'),
+  };
+}
+
+function liveSlotVisibleTick(row, cachedTick) {
+  const state = row?.status?.state || '';
+  if (['stopped', 'worker_stopped'].includes(state)) return null;
+  return cachedTick || row?.tick || null;
+}
+
 function renderLiveSlot(slotNumber) {
   const slotId = `live-${slotNumber}`;
   const row = liveStreams[slotId] || {};
   const status = row.status || {};
-  const tick = liveTicks[slotId] || row.tick || null;
+  const tick = liveSlotVisibleTick(row, liveTicks[slotId]);
   const card = document.getElementById(`liveCard${slotNumber}`);
   const dot = document.getElementById(`liveDot${slotNumber}`);
   const statusEl = document.getElementById(`liveStatus${slotNumber}`);
@@ -635,10 +760,16 @@ function renderLiveSlot(slotNumber) {
 
   const terminalId = tick?.terminal_id || status?.terminal_id || row.config?.terminal_id;
   const worker = workerStates[terminalId] || {};
+  const terminal = terminals.find(t => t.id === terminalId);
+  const stopped = ['stopped', 'worker_stopped'].includes(status?.state);
   const receivedAge = tick ? ageSeconds(tick.received_at) : Infinity;
   const liveOk = Boolean(tick && worker.connected && receivedAge < 2.0);
   const stale = Boolean(tick && worker.connected && receivedAge >= 2.0);
-  const hasError = Boolean(status?.state === 'symbol_not_found' || status?.state === 'error' || (!worker.connected && terminalId));
+  const hasError = Boolean(!stopped && (
+    status?.state === 'symbol_not_found'
+    || status?.state === 'error'
+    || (!worker.connected && terminalId)
+  ));
 
   card.classList.toggle('streaming', liveOk);
   card.classList.toggle('stale', stale && !hasError);
@@ -648,11 +779,19 @@ function renderLiveSlot(slotNumber) {
   const terminalLabel = tick?.terminal_label || status?.terminal_label || row.config?.terminal_label || 'Terminal não selecionado';
   const symbolName = tick?.name || status?.name || row.config?.symbol?.name || '';
   const actualSymbol = tick?.resolved_symbol || status?.symbol || tick?.symbol || '';
-  const message = status?.message || (tick ? 'Recebendo consultas do worker.' : 'Não iniciado.');
+  const message = stopped
+    ? (terminal && !terminal.running ? 'Fluxo parado: MT5 fechado.' : 'Fluxo parado: leitura encerrada.')
+    : (status?.message || (tick ? 'Recebendo consultas do worker.' : 'Não iniciado.'));
   setHtmlIfChanged(statusEl, `<strong>${escapeHtml(terminalLabel)}</strong>${symbolName ? ` · ${escapeHtml(symbolName)}` : ''}<br>${escapeHtml(message)}${actualSymbol ? ` · símbolo ${escapeHtml(actualSymbol)}` : ''}`);
+  updateLiveSlotAction(slotNumber);
 
   setTextIfChanged(bidEl, tick ? formatNumber(tick.bid) : '—');
   setTextIfChanged(askEl, tick ? formatNumber(tick.ask) : '—');
+
+  if (stopped) {
+    setHtmlIfChanged(metaEl, 'Leitura encerrada.<br>Selecione outro terminal conectado para alterar este fluxo.');
+    return;
+  }
 
   if (!tick) {
     setHtmlIfChanged(metaEl, `PID worker: ${escapeHtml(worker.pid || status?.pid || '—')}<br>Conta/servidor: ${escapeHtml(worker.account_login || '—')} · ${escapeHtml(worker.server || '—')}<br>Leituras: 0 · ticks novos: 0`);
@@ -671,18 +810,40 @@ function renderLiveSlot(slotNumber) {
 
 function updateLiveProof() {
   const el = document.getElementById('liveProof');
-  const ticks = LIVE_SLOT_IDS.map(id => liveTicks[id]).filter(Boolean);
+  const activeSlotIds = LIVE_SLOT_IDS.filter(id => {
+    const row = liveStreams[id] || {};
+    return Boolean(row.config) && !['stopped', 'worker_stopped'].includes(row?.status?.state);
+  });
+  const stoppedCount = LIVE_SLOT_IDS.filter(id => {
+    const row = liveStreams[id] || {};
+    return Boolean(row.config) && ['stopped', 'worker_stopped'].includes(row?.status?.state);
+  }).length;
+  const ticks = activeSlotIds.map(id => liveTicks[id]).filter(Boolean);
   const uniqueTerminals = new Set(ticks.map(t => t.terminal_id).filter(Boolean));
   const activelyPolled = ticks.filter(t => ageSeconds(t.received_at) < 2.0);
   const connectedWorkers = terminals.filter(t => (workerStates[t.id] || t.worker || {}).connected).length;
+  const issues = activeSlotIds
+    .map(slotId => {
+      const slotNumber = Number(slotId.split('-').pop());
+      return liveSlotIssueDetails(liveStreams[slotId] || {}, liveTicks[slotId], slotNumber);
+    })
+    .filter(Boolean);
 
   el.classList.remove('ok', 'warn');
-  if (activelyPolled.length === 3 && uniqueTerminals.size === 3) {
+  if (activeSlotIds.length === 3 && activelyPolled.length === 3 && uniqueTerminals.size === 3) {
     el.classList.add('ok');
     setHtmlIfChanged(el, `<strong>✓ Simultaneidade confirmada:</strong> 3 fluxos recentes, vindos de 3 terminais e PIDs independentes. Workers conectados: ${connectedWorkers}.`);
-  } else if (ticks.length) {
+  } else if (activeSlotIds.length || stoppedCount) {
     el.classList.add('warn');
-    setHtmlIfChanged(el, `<strong>Teste em andamento:</strong> ${activelyPolled.length}/3 fluxos recentes · ${uniqueTerminals.size} terminal(is) distinto(s) · ${connectedWorkers} worker(s) conectado(s).`);
+    const issueText = issues.map(issue => (
+      `<strong>Fluxo ${issue.slotNumber}</strong> — ${escapeHtml(issue.terminalLabel)} · ${escapeHtml(issue.symbolName)}: ${escapeHtml(issue.detail)}`
+    )).join('; ');
+    const activeSummary = activeSlotIds.length
+      ? `${activelyPolled.length}/${activeSlotIds.length} fluxo(s) ativo(s) com leitura recente`
+      : 'nenhum fluxo ativo';
+    const stoppedSummary = stoppedCount ? ` · ${stoppedCount} fluxo(s) parado(s)` : '';
+    const heading = activeSlotIds.length ? 'Teste em andamento:' : 'Teste parado:';
+    setHtmlIfChanged(el, `<strong>${heading}</strong> ${activeSummary}${stoppedSummary} · ${connectedWorkers} worker(s) conectado(s).${issueText ? `<br>Atenção: ${issueText}.` : ''}`);
   } else {
     setTextIfChanged(el, `Configure os painéis para comprovar as conexões simultâneas. Workers conectados: ${connectedWorkers}.`);
   }
@@ -700,6 +861,19 @@ async function loadTerminals() {
   const res = parseResponse(await bridge.getTerminals());
   if (!res.ok) return toast(res.message, true);
   renderTerminals(res.data);
+}
+
+async function reloadTerminals() {
+  const button = document.getElementById('btnReloadTerminals');
+  if (button.disabled) return;
+  button.disabled = true;
+  button.textContent = 'Atualizando...';
+  try {
+    await loadTerminals();
+  } finally {
+    button.textContent = 'Atualizar';
+    button.disabled = false;
+  }
 }
 
 async function loadWorkerStates() {
@@ -763,23 +937,34 @@ async function createTerminal() {
 function openEditTerminal(id) {
   const terminal = terminals.find(t => t.id === id);
   if (!terminal) return toast('Terminal não encontrado.', true);
+  const worker = workerStates[terminal.id] || terminal.worker || {};
+  if (terminal.running || worker.alive) {
+    return toast('Feche o MT5 e pare a leitura antes de editar este terminal.', true);
+  }
   document.getElementById('editTerminalId').value = terminal.id;
   document.getElementById('editTerminalLabel').value = terminal.label || '';
   document.getElementById('editBrokerName').value = terminal.broker_name || '';
   document.getElementById('editAccountLogin').value = terminal.account_login || '';
-  const worker = workerStates[terminal.id] || terminal.worker || {};
   document.getElementById('editTerminalDetails').innerHTML = `
     <strong>Instância controlada</strong>
     <span>${escapeHtml(terminal.instance_dir || '')}</span>
     <span>Conta detectada: ${escapeHtml(worker.account_login || 'ainda não detectada')}</span>
     <span>Servidor detectado: ${escapeHtml(worker.server || 'ainda não detectado')}</span>
   `;
+  setEditTerminalMessage();
   document.getElementById('editTerminalModal').classList.remove('hidden');
   document.getElementById('editTerminalLabel').focus();
 }
 
 function closeEditTerminal() {
   document.getElementById('editTerminalModal').classList.add('hidden');
+  setEditTerminalMessage();
+}
+
+function setEditTerminalMessage(message = '') {
+  const element = document.getElementById('editTerminalMessage');
+  element.textContent = message;
+  element.classList.toggle('hidden', !message);
 }
 
 async function saveTerminalEdit() {
@@ -790,6 +975,7 @@ async function saveTerminalEdit() {
   const button = document.getElementById('btnSaveTerminalEdit');
   button.disabled = true;
   button.textContent = 'Salvando...';
+  setEditTerminalMessage();
   try {
     const res = parseResponse(await bridge.updateTerminal(id, label, broker, login));
     toast(res.message, !res.ok);
@@ -797,7 +983,15 @@ async function saveTerminalEdit() {
       closeEditTerminal();
       await loadTerminals();
       await loadWorkerStates();
+    } else {
+      setEditTerminalMessage(res.message || 'Não foi possível salvar as alterações.');
+      await loadWorkerStates();
+      await loadTerminals();
     }
+  } catch (error) {
+    const message = error?.message || 'Falha inesperada ao salvar as alterações.';
+    setEditTerminalMessage(message);
+    toast(message, true);
   } finally {
     button.disabled = false;
     button.textContent = 'Salvar alterações';
@@ -936,7 +1130,10 @@ async function startLiveSlot(slotNumber, quiet = false) {
   }
   const res = parseResponse(await bridge.configureLiveStream(`live-${slotNumber}`, terminalId, symbolId));
   if (!quiet) toast(res.message, !res.ok);
-  if (res.ok) await loadLiveStreams();
+  if (res.ok) {
+    document.getElementById(`liveTerminal${slotNumber}`).dataset.selectionTouched = '0';
+    await loadLiveStreams();
+  }
   return Boolean(res.ok);
 }
 
@@ -1019,7 +1216,7 @@ window.addEventListener('DOMContentLoaded', () => {
   document.querySelectorAll('[data-close-delete]').forEach(el => el.addEventListener('click', closeDeleteTerminal));
   document.getElementById('deleteTerminalConfirmation').addEventListener('input', updateDeleteConfirmationState);
   document.getElementById('btnConfirmDeleteTerminal').addEventListener('click', confirmDeleteTerminal);
-  document.getElementById('btnReloadTerminals').addEventListener('click', loadTerminals);
+  document.getElementById('btnReloadTerminals').addEventListener('click', reloadTerminals);
   document.getElementById('btnReloadSymbols').addEventListener('click', loadSymbols);
   document.getElementById('btnOpenSelected').addEventListener('click', openSelectedTerminals);
   document.getElementById('btnCloseSelected').addEventListener('click', closeSelectedTerminals);
@@ -1030,6 +1227,13 @@ window.addEventListener('DOMContentLoaded', () => {
   document.getElementById('btnStopLiveAll').addEventListener('click', stopAllLiveSlots);
   document.querySelectorAll('[data-live-start]').forEach(btn => btn.addEventListener('click', () => startLiveSlot(Number(btn.dataset.liveStart))));
   document.querySelectorAll('[data-live-stop]').forEach(btn => btn.addEventListener('click', () => stopLiveSlot(Number(btn.dataset.liveStop))));
+  for (let i = 1; i <= 3; i++) {
+    document.getElementById(`liveTerminal${i}`).addEventListener('change', event => {
+      event.currentTarget.dataset.selectionTouched = '1';
+      updateLiveSlotAction(i);
+    });
+    document.getElementById(`liveSymbol${i}`).addEventListener('change', () => updateLiveSlotAction(i));
+  }
 
   setInterval(() => {
     for (let i = 1; i <= 3; i++) renderLiveSlot(i);

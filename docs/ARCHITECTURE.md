@@ -34,6 +34,8 @@ Cada cadastro cria uma cópia isolada em:
 user_data/mt5_instances/<CORRETORA>-<CONTA>/terminal64.exe
 ```
 
+`instance_slug` identifica a pasta. `instance_dir` e `terminal_exe` são gravados no JSON como caminhos relativos à instalação e convertidos para caminhos absolutos apenas em memória. Dessa forma, mover a pasta completa do aplicativo não mantém referências à instalação anterior.
+
 A identidade de negócio é `corretora + conta informada`, mas cada terminal também possui um `id` interno estável.
 
 Os registros `user_data/terminals.json` e `user_data/symbols.json`, as instâncias, os logs e a instalação-modelo local são dados de runtime ignorados pelo Git. Somente os arquivos `*.example.json` sem dados reais e o arquivo de instrução da pasta `MT5/` são versionados.

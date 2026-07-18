@@ -1,6 +1,6 @@
-# Status atual — Base 0.4.8
+# Status atual — Base 0.4.9
 
-A 0.4.8 é uma etapa de hardening da baseline funcional 0.4.7. Ela não adiciona funcionalidades nem altera intencionalmente o fluxo validado com três instâncias MT5.
+A 0.4.9 continua o hardening da baseline funcional 0.4.7. Ela não adiciona funcionalidades nem altera intencionalmente o fluxo validado com três instâncias MT5.
 
 ## Funcionalidades validadas
 
@@ -17,6 +17,21 @@ A 0.4.8 é uma etapa de hardening da baseline funcional 0.4.7. Ela não adiciona
 - Fechamento dos MT5 controlados ao sair do aplicativo.
 - Resolução de aliases como `US30Cash`, `US100Cash`, `US500Cash`, `WINQ26`, `BTCUSD` etc.
 
+## Hardening 0.4.9
+
+- Ações globais de leitura coerentes com a existência de workers ativos.
+- Rollback da pasta de instância quando o cadastro JSON falha.
+- Edição permitida somente com MT5 fechado e worker parado.
+- Rollback da renomeação e do cadastro para falhas durante a edição de terminal fechado.
+- Migração automática de caminhos absolutos legados para caminhos relativos à instalação atual.
+- Identificação dos fluxos sem leitura recente e estado coerente da ação **Iniciar/Alterar**.
+- Distinção visual entre leitura atrasada e fluxo parado, sem reaproveitar cotação ou terminal de outro fluxo.
+- Abertura em lote bloqueada quando a seleção não cabe nas vagas simultâneas de MT5 e workers.
+- Snapshot individual removido dos cards; a coleta automática e o painel consolidado continuam ativos.
+- Mensagens de falha de edição visíveis no próprio modal.
+
+Esses itens possuem cobertura automatizada com fakes e testes de regras de estado em Node. Em 17 de julho de 2026, o conjunto foi validado manualmente no Windows com MT5 reais, incluindo bloqueio visual da edição, migração dos caminhos locais, renomeação após fechar o MT5, limite simultâneo e coerência dos fluxos no Dashboard.
+
 ## Limitações conhecidas
 
 - Mapeamento de símbolo por terminal ainda não existe.
@@ -26,3 +41,4 @@ A 0.4.8 é uma etapa de hardening da baseline funcional 0.4.7. Ela não adiciona
 - Testes automatizados cobrem persistência JSON, nomes de pastas, resolução de símbolos, limites do supervisor de workers e orquestração principal da bridge com fakes.
 - Processos reais, QWebEngine e integração com a biblioteca MetaTrader5 continuam fora da suíte automatizada multiplataforma.
 - O teste real de MT5 depende de Windows com terminais autenticados.
+- Numeração alfabética dos MT5, com renumeração após mudanças, e splashscreen permanecem como evoluções futuras aprovadas conceitualmente.

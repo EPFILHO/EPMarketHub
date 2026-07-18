@@ -231,7 +231,20 @@ class MarketHubBridge(QObject):
                 terminal_exe=str(terminal_exe),
                 portable=True,
             )
-            self.terminal_registry.upsert(profile)
+            try:
+                self.terminal_registry.upsert(profile)
+            except Exception as save_error:
+                try:
+                    self.terminal_manager.rollback_created_instance(terminal_exe.parent)
+                except Exception as rollback_error:
+                    logger.exception(
+                        "Falha ao remover a pasta recém-criada após erro no cadastro"
+                    )
+                    raise RuntimeError(
+                        f"{save_error} A pasta recém-criada também não pôde ser removida: "
+                        f"{rollback_error}"
+                    ) from save_error
+                raise
             self.terminal_manager.remember(profile)
             self._emit_terminals()
             return ok(profile.to_dict(), "Terminal criado. Abra o MT5 e faça login manualmente na primeira vez.")
@@ -251,6 +264,11 @@ class MarketHubBridge(QObject):
         if not profile:
             return fail("Terminal não encontrado.")
 
+        if self.terminal_manager.is_running(terminal_id, profile) or self.worker_manager.is_running(
+            terminal_id
+        ):
+            return fail("Feche o MT5 e pare a leitura antes de editar este terminal.")
+
         validation = self._validate_terminal_fields(label, broker_name, account_login)
         if validation:
             return fail(validation)
@@ -266,16 +284,9 @@ class MarketHubBridge(QObject):
         old_profile = replace(profile)
         old_dir = Path(profile.instance_dir).resolve()
         new_slug = self.terminal_manager.build_instance_slug(broker_name, account_login)
-        worker_was_running = self.worker_manager.is_running(terminal_id)
-        terminal_was_running = self.terminal_manager.is_running(terminal_id, profile)
         renamed_dir: Path | None = None
 
         try:
-            if worker_was_running:
-                self.worker_manager.stop_worker(terminal_id)
-            if terminal_was_running:
-                self.terminal_manager.stop(terminal_id, profile=profile)
-
             if new_slug != (profile.instance_slug or old_dir.name):
                 renamed_dir, terminal_exe = self.terminal_manager.rename_instance(profile, new_slug)
                 profile.instance_slug = new_slug
@@ -289,32 +300,24 @@ class MarketHubBridge(QObject):
             self.terminal_registry.upsert(profile)
             self.terminal_manager.remember(profile)
 
-            if terminal_was_running:
-                self.terminal_manager.launch(profile)
-            if worker_was_running:
-                self.worker_manager.start_worker(
-                    profile, self.symbol_registry.list(enabled_only=True)
-                )
-
             self._emit_terminals()
             self._emit_live_streams()
             return ok(profile.to_dict(), "Dados atualizados e pasta da instância ajustada automaticamente.")
         except Exception as exc:
             logger.exception("Erro ao editar terminal")
+            rollback_message = ""
             try:
                 if renamed_dir is not None:
                     self.terminal_manager.rollback_rename(renamed_dir, old_dir)
                 self.terminal_registry.upsert(old_profile)
                 self.terminal_manager.remember(old_profile)
-                if terminal_was_running:
-                    self.terminal_manager.launch(old_profile)
-                if worker_was_running:
-                    self.worker_manager.start_worker(
-                        old_profile, self.symbol_registry.list(enabled_only=True)
-                    )
-            except Exception:
+            except Exception as rollback_error:
                 logger.exception("Falha ao desfazer edição do terminal")
-            return fail(str(exc))
+                rollback_message = (
+                    " Também houve falha ao desfazer completamente a edição: "
+                    f"{rollback_error}"
+                )
+            return fail(f"{exc}{rollback_message}")
 
     def _start_reading_for_profile(self, profile: TerminalProfile) -> tuple[bool, str]:
         """Inicia o worker de um terminal já aberto, sem alternar conexões."""
@@ -567,7 +570,7 @@ class MarketHubBridge(QObject):
 
     @Slot(result=str)
     def startAllWorkers(self) -> str:
-        """Compatibilidade temporária; a GUI 0.4.7 usa startSelectedWorkers."""
+        """Compatibilidade temporária; a GUI atual usa startSelectedWorkers."""
         terminal_ids = [profile.id for profile in self.terminal_registry.list()[: self.max_active_mt5]]
         return self.startSelectedWorkers(json.dumps(terminal_ids))
 
@@ -679,7 +682,7 @@ class MainWindow(QMainWindow):
         self.terminal_manager = terminal_manager
         self.worker_manager = worker_manager
         self._shutdown_done = False
-        self.setWindowTitle("EP Market Hub — Base 0.4.7 Clean Handoff")
+        self.setWindowTitle("EP Market Hub — Base 0.4.9 Clean Handoff")
         self.resize(1440, 860)
 
         self.web_view = QWebEngineView(self)

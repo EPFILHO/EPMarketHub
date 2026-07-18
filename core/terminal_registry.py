@@ -15,8 +15,15 @@ class TerminalRegistry:
     enquanto ``id`` permanece estável mesmo quando o usuário corrige os dados.
     """
 
-    def __init__(self, terminals_file: Path):
+    def __init__(
+        self,
+        terminals_file: Path,
+        root_dir: Path | None = None,
+        instances_dir: Path | None = None,
+    ):
         self.terminals_file = terminals_file
+        self.root_dir = root_dir.resolve() if root_dir is not None else None
+        self.instances_dir = instances_dir.resolve() if instances_dir is not None else None
 
     @staticmethod
     def _identity_part(value: str) -> str:
@@ -30,11 +37,55 @@ class TerminalRegistry:
         rows = load_json(self.terminals_file, [])
         if not isinstance(rows, list):
             return []
+        return self._profiles_from_rows(rows)
+
+    def _profiles_from_rows(self, rows: Iterable[dict]) -> list[TerminalProfile]:
         profiles = [TerminalProfile.from_dict(row) for row in rows if isinstance(row, dict)]
         for profile in profiles:
             if not profile.instance_slug and profile.instance_dir:
-                profile.instance_slug = Path(profile.instance_dir).name
+                profile.instance_slug = self._path_tail(profile.instance_dir)
+            self._bind_installation_paths(profile)
         return profiles
+
+    @staticmethod
+    def _path_tail(value: str) -> str:
+        return str(value or "").strip().replace("\\", "/").rstrip("/").split("/")[-1]
+
+    def _bind_installation_paths(self, profile: TerminalProfile) -> None:
+        """Resolve caminhos persistidos contra a instalação que está em execução."""
+
+        if self.instances_dir is None or not profile.instance_slug:
+            return
+        slug = self._path_tail(profile.instance_slug)
+        if not slug or slug in {".", ".."}:
+            return
+        profile.instance_slug = slug
+        instance_dir = (self.instances_dir / slug).resolve()
+        profile.instance_dir = str(instance_dir)
+        profile.terminal_exe = str(instance_dir / "terminal64.exe")
+
+    def migrate_paths(self) -> int:
+        """Converte caminhos absolutos legados para caminhos relativos à instalação."""
+
+        if self.root_dir is None or self.instances_dir is None:
+            return 0
+        rows = load_json(self.terminals_file, [])
+        if not isinstance(rows, list):
+            return 0
+        profiles = self._profiles_from_rows(row for row in rows if isinstance(row, dict))
+        serialized = [self._serialize(profile) for profile in profiles]
+        changed = sum(
+            1
+            for before, after in zip(
+                (row for row in rows if isinstance(row, dict)),
+                serialized,
+                strict=True,
+            )
+            if before != after
+        )
+        if changed:
+            save_json_atomic(self.terminals_file, serialized)
+        return changed
 
     def get(self, terminal_id: str) -> TerminalProfile | None:
         return next((t for t in self.list() if t.id == terminal_id), None)
@@ -78,4 +129,22 @@ class TerminalRegistry:
         return len(new_rows) != len(rows)
 
     def _save(self, rows: Iterable[TerminalProfile]) -> None:
-        save_json_atomic(self.terminals_file, [row.to_dict() for row in rows])
+        save_json_atomic(self.terminals_file, [self._serialize(row) for row in rows])
+
+    def _serialize(self, profile: TerminalProfile) -> dict:
+        data = profile.to_dict()
+        if self.root_dir is None or self.instances_dir is None or not profile.instance_slug:
+            return data
+
+        slug = self._path_tail(profile.instance_slug)
+        instance_dir = (self.instances_dir / slug).resolve()
+        try:
+            relative_dir = instance_dir.relative_to(self.root_dir)
+        except ValueError as exc:
+            raise ValueError(
+                "A pasta de instâncias deve permanecer dentro da instalação do EP Market Hub."
+            ) from exc
+        data["instance_slug"] = slug
+        data["instance_dir"] = relative_dir.as_posix()
+        data["terminal_exe"] = (relative_dir / "terminal64.exe").as_posix()
+        return data

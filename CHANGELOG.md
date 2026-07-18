@@ -71,3 +71,22 @@
 - Proteção de executáveis, instâncias, sessões, logs e registros locais contra versionamento.
 - Ampliação dos testes de caracterização para registros, workers, bridge e símbolos usando fakes.
 - Correções seguras de estilo e tipagem para conformidade com Ruff.
+
+## 0.4.9
+
+- Continuação do hardening da baseline, sem funcionalidades novas e sem mudança estrutural.
+- Botão **Parar leituras** habilitado somente quando existe worker ativo.
+- Feedback temporário no botão **Atualizar** durante a sincronização manual do estado.
+- Remoção compensatória da pasta recém-criada quando o cadastro não pode ser persistido.
+- Edição bloqueada enquanto o MT5 estiver aberto ou seu worker permanecer ativo.
+- Rollback da renomeação e do cadastro se uma edição de terminal fechado falhar.
+- Caminhos de instâncias persistidos relativamente à instalação atual, com migração dos registros absolutos legados.
+- Banner do teste simultâneo identifica nominalmente cada fluxo sem leitura recente.
+- Botão individual de fluxo é desativado quando a configuração já está aplicada e muda para **Alterar** após nova seleção.
+- Banner diferencia leitura atrasada de fluxo parado e mantém altura mínima para duas linhas.
+- Fluxo parado preserva o terminal configurado, sem substituição automática nem cotação antiga na tela.
+- Botão **Abrir selecionados** respeita as vagas simultâneas disponíveis para MT5 e workers.
+- Remoção do botão redundante **Snapshot** dos cards de terminais; snapshots automáticos e consolidados permanecem disponíveis.
+- Erros de edição ficam visíveis dentro do modal e em toast acima dos diálogos.
+- Testes automatizados para as novas condições de falha sem abrir MT5 real.
+- Baseline 0.4.9 validada manualmente no Windows com MT5 reais e conexões simultâneas em 17 de julho de 2026.
