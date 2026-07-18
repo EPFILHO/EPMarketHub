@@ -73,13 +73,43 @@
 1. Abra e conecte a quantidade máxima atual de MT5 e confirme um PID Python distinto por terminal.
 2. Pare apenas a leitura do terminal intermediário e confirme que os demais continuam conectados e atualizando.
 3. Reinicie a leitura parada e confirme que ela recebe um novo PID sem alterar os outros workers.
-4. Feche manualmente um dos MT5 enquanto seu worker está conectado e confirme que o estado deixa de ser conectado sem contaminar os demais cards.
+4. Feche um MT5 pela interface e confirme **MT5 fechado / Desconectado** sem contaminar os demais cards.
 5. Reabra esse MT5 pela interface e confirme a restauração da leitura e dos fluxos anteriormente configurados para ele.
 6. Clique repetidamente em **Parar leituras** e depois feche o aplicativo; confirme que não surge erro e que nenhum MT5 controlado permanece aberto.
 7. Inicie novamente o aplicativo e confirme que cadastros, caminhos relativos e aliases continuam preservados.
 8. Confirme que não existe opção na interface nem arquivo em `user_data` para o usuário alterar o limite simultâneo.
+9. Com uma leitura conectada, feche diretamente a janela daquele MT5 pelo **X**.
+10. Confirme primeiro **Reabrindo MT5** e depois que o kernel reabre a mesma instância uma única vez, minimizada, e que o worker volta a conectar.
+11. Selecione dois ou três MT5 abertos e clique em **Fechar selecionados**.
+12. Confirme que o texto do botão mostra o progresso e que cada card muda para **MT5 fechado / Desconectado** assim que seu próprio fechamento termina, sem esperar o último.
+
+## Reconciliação de instância local
+
+Use apenas um cadastro descartável, com MT5 e worker fechados.
+
+1. Mova sua pasta para fora de `user_data/mt5_instances` e clique em **Atualizar**.
+2. Confirme **Instância ausente**, ações de abertura/edição/seleção bloqueadas e o botão **Resolver**.
+3. Abra **Resolver**, cancele, devolva a pasta ao caminho original e confirme que **Atualizar** restaura o estado **MT5 fechado**.
+4. Mova novamente a pasta e escolha **Recriar instância**; confirme a cópia limpa de `terminal64.exe` e a orientação para login manual.
+5. Em outro cadastro descartável ausente, escolha **Remover cadastro** e confirme que ele sai da lista sem qualquer tentativa de apagar ou restaurar pastas externas.
 
 Falhas artificiais de fila cheia/fechada, processo resistente, evento de PID antigo e promoção interrompida de JSON são cobertas por fakes na suíte automatizada. Não devem ser provocadas encerrando processos reais à força durante uma sessão autenticada.
+
+## Sincronização da instalação de teste
+
+Com o aplicativo e todos os MT5 fechados, simule primeiro:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\sync_test_copy.ps1 -TargetRoot D:\EP\EPMarketHub
+```
+
+Revise a lista e aplique somente depois:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\sync_test_copy.ps1 -TargetRoot D:\EP\EPMarketHub -Apply
+```
+
+O script não executa Git no destino, não remove arquivos, recusa caminhos sensíveis, cria backup preventivo dos registros JSON e confirma os hashes deles e do executável antes e depois.
 
 ## Símbolos Cash
 

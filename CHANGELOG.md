@@ -102,4 +102,13 @@
 - Falhas de escrita JSON preservam o último arquivo válido; conteúdo vazio ou inválido é movido para quarentena recuperável.
 - Abertura, edição, exclusão e ações em lote passam a considerar tanto o processo MT5 quanto o worker ativo.
 - Fronteiras, invariantes, estados e modelo de falhas registrados em `docs/KERNEL.md`.
+- Protocolo interno v1 formaliza comandos, eventos, versão e propriedade da conexão isolada.
+- MT5 fechado diretamente é relançado pelo kernel em modo portátil e minimizado, sem duplicar a instância.
+- Estado transitório **Reabrindo MT5** diferencia processo relançado de conexão já restabelecida.
+- Instâncias removidas externamente podem ser recriadas a partir da base ou ter somente o cadastro local removido.
+- Pasta ausente interrompe o worker correspondente para evitar tentativas e logs repetidos.
+- Todos os consumidores da fila passam pelo mesmo despachante, impedindo uma atualização da tela de descartar eventos de relançamento.
+- Fechamento dos terminais selecionados atualiza cada card conforme sua operação termina.
+- Estado visual de worker parado passa a ser apresentado como **Desconectado**.
+- Sincronizador seguro copia somente arquivos de desenvolvimento e protege `.git`, `MT5` e todo o `user_data` da instalação de teste.
 - Validação automatizada concluída; validação manual final da 0.4.10 com MT5 real permanece pendente.

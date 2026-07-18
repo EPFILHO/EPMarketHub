@@ -46,6 +46,8 @@ Os registros `user_data/terminals.json` e `user_data/symbols.json`, as instânci
 ## Comunicação
 
 Workers e processo principal trocam mensagens por filas do `multiprocessing`.
+Os envelopes usam a versão definida em `core/worker_protocol.py`; o contrato v1
+está documentado em `docs/KERNEL_PROTOCOL.md`.
 
 Tipos importantes de mensagens:
 

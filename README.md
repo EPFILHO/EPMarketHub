@@ -46,6 +46,14 @@ Modo de diagnóstico, caso o Chromium/QWebEngine apresente tela preta:
 python app.py --safe-rendering
 ```
 
+## Instalação de teste
+
+O desenvolvimento ocorre no clone de trabalho. `D:\EP\EPMarketHub` é somente
+a instalação com MT5 e dados reais para validação manual. Não execute operações
+Git nessa pasta. O script `scripts/sync_test_copy.ps1` lista e copia apenas os
+arquivos alterados permitidos, faz backup preventivo e confirma que executável,
+cadastros e símbolos locais mantiveram os mesmos hashes.
+
 ## Instalação-modelo do MT5
 
 Coloque apenas o executável base em:
@@ -88,6 +96,7 @@ user_data/              Dados locais e instâncias isoladas.
 - `AGENTS.md`: regras para agentes/Codex trabalharem neste repositório.
 - `docs/ARCHITECTURE.md`: arquitetura atual.
 - `docs/KERNEL.md`: fronteiras, invariantes e modelo de falhas do kernel.
+- `docs/KERNEL_PROTOCOL.md`: contrato versionado entre supervisor e workers MT5.
 - `docs/BASELINE_AUDIT_0.4.7.md`: auditoria técnica da baseline validada.
 - `docs/CURRENT_STATUS.md`: o que funciona e o que ainda falta.
 - `docs/MANUAL_TESTS.md`: roteiro atual de testes manuais.

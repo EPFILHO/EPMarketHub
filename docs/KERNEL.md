@@ -59,6 +59,7 @@ O supervisor aceita injeção do limite para que os testes cubram valores como
 | `stopped` | não | não | leitura não iniciada ou encerrada |
 | `starting` | sim | não | processo criado, aguardando primeira conexão |
 | `waiting_login` | sim | não | MT5 aberto sem conta autenticada |
+| `reopening_terminal` | sim | não | worker detectou o MT5 fechado e aguarda reabertura controlada |
 | `reconnecting` | sim | não | conexão perdida ou tentativa em andamento |
 | `connected` | sim | sim | biblioteca conectada ao terminal específico |
 | `error` | não ou resistente | não | falha inesperada ou encerramento não confirmado |
@@ -79,7 +80,9 @@ O fechamento do kernel cobre e testa:
 - fila de comandos cheia durante uma solicitação;
 - fila de eventos congestionada;
 - evento residual de um PID anterior;
+- evento de ciclo de vida consumido durante uma consulta QWebChannel concorrente;
 - falha de abertura ou fechamento de `terminal64.exe`;
+- pasta da instância ou `terminal64.exe` removido fora do aplicativo;
 - JSON vazio, inválido, com codificação danificada ou inacessível;
 - falha ao promover o arquivo temporário da escrita atômica;
 - chamada repetida de shutdown.
@@ -88,9 +91,18 @@ O fechamento do kernel cobre e testa:
 não afetar outros terminais e retornar ou registrar um estado explícito. Não
 significa esconder a falha nem afirmar sucesso sem confirmar o resultado.
 
+Cada cadastro também expõe a integridade local `ready`, `directory_missing`,
+`executable_missing` ou `invalid_path`. Uma instância indisponível não pode ser
+aberta, editada nem selecionada em lote. O usuário pode recriar o executável a
+partir da instalação-modelo ou remover somente o cadastro; o kernel não tenta
+manipular automaticamente a Lixeira do Windows.
+
 ## Regra de evolução
 
 Depois do fechamento da 0.4.10, mudanças no kernel devem ocorrer somente diante
 de defeito reproduzido ou requisito aprovado. Plataforma, interface e módulos
 devem depender destes contratos em vez de duplicar regras de processo,
 persistência ou limite simultâneo.
+
+O envelope, os comandos, os eventos e a reabertura controlada estão congelados
+como protocolo v1 em `docs/KERNEL_PROTOCOL.md`.
