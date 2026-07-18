@@ -5,7 +5,7 @@ let workerStates = {};
 let snapshots = {};
 let liveStreams = {};
 let liveTicks = {};
-let runtimeLimits = { max_active_mt5: 3, registered: 0, open_mt5: 0, active_workers: 0 };
+let runtimeLimits = { max_active_mt5: null, registered: 0, open_mt5: 0, active_workers: 0 };
 let workerSummarySignature = '';
 let dashboardTerminalSignature = '';
 const SELECTED_TERMINALS_KEY = 'ep_market_hub_selected_terminals_v1';
@@ -17,6 +17,11 @@ const LIVE_PREFERENCES = [
   ['bitcoin', 'usdjpy', 'eurusd'],
   ['winq26', 'wdo', 'win', 'bitcoin', 'eurusd']
 ];
+
+function activeTerminalLimit() {
+  const value = Number(runtimeLimits.max_active_mt5);
+  return Number.isInteger(value) && value > 0 ? value : 0;
+}
 
 function closeEnhancedSelects(except = null) {
   document.querySelectorAll('.select-shell.open').forEach(shell => {
@@ -207,6 +212,9 @@ function selectedTerminalList() {
 }
 
 function terminalBulkActionState(rows, selectedIds, states, maxActive) {
+  maxActive = Number.isInteger(Number(maxActive)) && Number(maxActive) > 0
+    ? Number(maxActive)
+    : 0;
   const selected = rows.filter(t => selectedIds.has(t.id));
   const openCount = rows.filter(t => t.running).length;
   const activeWorkerCount = rows.filter(t => (states[t.id] || t.worker || {}).alive).length;
@@ -228,6 +236,7 @@ function terminalBulkActionState(rows, selectedIds, states, maxActive) {
   let openTitle = 'Abre os MT5 selecionados e inicia suas leituras';
   if (!selected.length) openTitle = 'Selecione pelo menos um terminal';
   else if (!candidates.length) openTitle = 'Todos os terminais selecionados já estão abertos com leitura ativa';
+  else if (!maxActive) openTitle = 'O limite simultâneo do kernel ainda não foi carregado';
   else if (exceedsCapacity) openTitle = `Não há vagas para abrir toda a seleção (limite de ${maxActive} MT5)`;
 
   return {
@@ -241,7 +250,7 @@ function terminalBulkActionState(rows, selectedIds, states, maxActive) {
 }
 
 function updateSelectionUi() {
-  const maxActive = Number(runtimeLimits.max_active_mt5 || 3);
+  const maxActive = activeTerminalLimit();
   const validIds = new Set(terminals.map(t => t.id));
   selectedTerminalIds = new Set(Array.from(selectedTerminalIds).filter(id => validIds.has(id)).slice(0, maxActive));
   persistSelectedTerminals();
@@ -268,7 +277,7 @@ function updateSelectionUi() {
 }
 
 function toggleTerminalSelection(terminalId, checked) {
-  const maxActive = Number(runtimeLimits.max_active_mt5 || 3);
+  const maxActive = activeTerminalLimit();
   if (checked && !selectedTerminalIds.has(terminalId) && selectedTerminalIds.size >= maxActive) {
     const input = document.querySelector(`[data-terminal-select="${terminalId}"]`);
     if (input) input.checked = false;
@@ -299,6 +308,35 @@ function workerBadgeClass(worker) {
   return '';
 }
 
+function terminalActionState(terminal, worker, openCount, activeWorkerCount, maxActive) {
+  const workerAlive = Boolean(worker?.alive);
+  const capacityUnavailable = !maxActive
+    || openCount >= maxActive
+    || activeWorkerCount >= maxActive;
+  const openBlocked = !terminal.running && capacityUnavailable;
+  const readingBlocked = workerAlive
+    ? false
+    : (!terminal.running || !maxActive || activeWorkerCount >= maxActive);
+  const readingLabel = workerAlive
+    ? (worker.connected ? 'Parar leitura' : 'Parar tentativa')
+    : 'Iniciar leitura';
+  const readingTitle = workerAlive
+    ? 'Encerra o processo de leitura deste terminal'
+    : (!terminal.running
+        ? 'Abra o MT5 para habilitar a leitura'
+        : ((!maxActive || activeWorkerCount >= maxActive)
+            ? `Limite de ${maxActive || '—'} MT5 simultâneos atingido`
+            : ''));
+  return {
+    openBlocked,
+    readingBlocked,
+    readingLabel,
+    readingTitle,
+    editBlocked: Boolean(terminal.running || workerAlive),
+    deleteBlocked: Boolean(terminal.running || workerAlive),
+  };
+}
+
 function renderTerminals(rows) {
   terminals = (rows || []).slice().sort(compareTerminal);
   terminals.forEach(t => {
@@ -319,26 +357,19 @@ function renderTerminals(rows) {
   }
 
   list.className = 'list';
-  const maxActive = Number(runtimeLimits.max_active_mt5 || 3);
+  const maxActive = activeTerminalLimit();
   const openCount = terminals.filter(t => t.running).length;
   const activeWorkerCount = terminals.filter(t => (workerStates[t.id] || t.worker || {}).alive).length;
   list.innerHTML = terminals.map(t => {
     const worker = workerStates[t.id] || t.worker || {};
-    const openBlocked = !t.running && openCount >= maxActive;
-    const waitingConnection = Boolean(worker.alive && !worker.connected);
-    const readingBlocked = !t.running
-      || waitingConnection
-      || (!worker.alive && activeWorkerCount >= maxActive);
-    const readingLabel = worker.connected
-      ? 'Parar leitura'
-      : (waitingConnection ? 'Aguardando conexão' : 'Iniciar leitura');
+    const actionState = terminalActionState(
+      t,
+      worker,
+      openCount,
+      activeWorkerCount,
+      maxActive,
+    );
     const limitTitle = `Limite de ${maxActive} MT5 simultâneos atingido`;
-    const readingTitle = !t.running
-      ? 'Abra o MT5 para habilitar a leitura'
-      : (waitingConnection
-          ? 'Aguardando o MT5 confirmar login e conexão com a corretora'
-          : ((!worker.alive && activeWorkerCount >= maxActive) ? limitTitle : ''));
-    const editBlocked = Boolean(t.running || worker.alive);
     const selected = selectedTerminalIds.has(t.id);
     return `
       <div class="terminal-item ${selected ? 'selected' : ''}" id="terminalItem-${escapeHtml(t.id)}" data-terminal-id="${escapeHtml(t.id)}">
@@ -363,17 +394,17 @@ function renderTerminals(rows) {
         <div class="worker-detail">${terminalWorkerDetailHtml(worker)}</div>
         <div class="actions">
           <button data-role="edit-button" onclick="openEditTerminal('${escapeJs(t.id)}')"
-                  ${editBlocked ? 'disabled' : ''}
-                  title="${editBlocked ? 'Feche o MT5 e pare a leitura antes de editar' : 'Edita o cadastro do terminal'}">Editar</button>
+                  ${actionState.editBlocked ? 'disabled' : ''}
+                  title="${actionState.editBlocked ? 'Feche o MT5 e pare a leitura antes de editar' : 'Edita o cadastro do terminal'}">Editar</button>
           <button data-role="open-button" onclick="launchTerminal('${escapeJs(t.id)}')"
-                  ${t.running || openBlocked ? 'disabled' : ''}
-                  title="${t.running ? 'MT5 já está aberto' : (openBlocked ? limitTitle : 'Abre o MT5 e inicia a leitura')}">Abrir MT5</button>
+                  ${t.running || actionState.openBlocked ? 'disabled' : ''}
+                  title="${t.running ? 'MT5 já está aberto' : (actionState.openBlocked ? limitTitle : 'Abre o MT5 e inicia a leitura')}">Abrir MT5</button>
           <button data-role="reading-button" class="${worker.connected ? '' : 'success'}"
-                  onclick="toggleReading('${escapeJs(t.id)}')" ${readingBlocked ? 'disabled' : ''}
-                  title="${readingTitle}">${readingLabel}</button>
+                  onclick="toggleReading('${escapeJs(t.id)}')" ${actionState.readingBlocked ? 'disabled' : ''}
+                  title="${actionState.readingTitle}">${actionState.readingLabel}</button>
           <button data-role="reconnect-button" onclick="reconnectWorker('${escapeJs(t.id)}')" ${worker.connected ? '' : 'disabled'}>Reconectar</button>
           <button data-role="close-button" class="danger" onclick="stopTerminal('${escapeJs(t.id)}')" ${t.running ? '' : 'disabled'}>Fechar MT5</button>
-          <button data-role="delete-button" class="danger" onclick="openDeleteTerminal('${escapeJs(t.id)}')" ${t.running ? 'disabled' : ''} title="${t.running ? 'Feche o MT5 antes de excluir a instância' : 'Exclui o cadastro e a pasta local da instância'}">Excluir</button>
+          <button data-role="delete-button" class="danger" onclick="openDeleteTerminal('${escapeJs(t.id)}')" ${actionState.deleteBlocked ? 'disabled' : ''} title="${actionState.deleteBlocked ? 'Feche o MT5 e pare a leitura antes de excluir a instância' : 'Exclui o cadastro e a pasta local da instância'}">Excluir</button>
         </div>
       </div>
     `;
@@ -397,7 +428,7 @@ function terminalWorkerDetailHtml(worker) {
 }
 
 function updateTerminalWorkerRows() {
-  const maxActive = Number(runtimeLimits.max_active_mt5 || 3);
+  const maxActive = activeTerminalLimit();
   const activeWorkerCount = terminals.filter(t => (workerStates[t.id] || t.worker || {}).alive).length;
   const openCount = terminals.filter(t => t.running).length;
 
@@ -422,10 +453,17 @@ function updateTerminalWorkerRows() {
         : 'Edita o cadastro do terminal';
     }
 
+    const actionState = terminalActionState(
+      t,
+      worker,
+      openCount,
+      activeWorkerCount,
+      maxActive,
+    );
     const limitTitle = `Limite de ${maxActive} MT5 simultâneos atingido`;
     const openButton = item.querySelector('[data-role="open-button"]');
     if (openButton) {
-      const blocked = !t.running && openCount >= maxActive;
+      const blocked = actionState.openBlocked;
       openButton.disabled = Boolean(t.running || blocked);
       openButton.title = t.running
         ? 'MT5 já está aberto'
@@ -434,21 +472,10 @@ function updateTerminalWorkerRows() {
 
     const readingButton = item.querySelector('[data-role="reading-button"]');
     if (readingButton) {
-      const waitingConnection = Boolean(worker.alive && !worker.connected);
-      const blocked = !t.running
-        || waitingConnection
-        || (!worker.alive && activeWorkerCount >= maxActive);
-      readingButton.disabled = blocked;
+      readingButton.disabled = actionState.readingBlocked;
       readingButton.classList.toggle('success', !worker.connected);
-      setTextIfChanged(
-        readingButton,
-        worker.connected ? 'Parar leitura' : (waitingConnection ? 'Aguardando conexão' : 'Iniciar leitura')
-      );
-      readingButton.title = !t.running
-        ? 'Abra o MT5 para habilitar a leitura'
-        : (waitingConnection
-            ? 'Aguardando o MT5 confirmar login e conexão com a corretora'
-            : ((!worker.alive && activeWorkerCount >= maxActive) ? limitTitle : ''));
+      setTextIfChanged(readingButton, actionState.readingLabel);
+      readingButton.title = actionState.readingTitle;
     }
 
     const reconnectButton = item.querySelector('[data-role="reconnect-button"]');
@@ -457,9 +484,9 @@ function updateTerminalWorkerRows() {
     if (closeButton) closeButton.disabled = !t.running;
     const deleteButton = item.querySelector('[data-role="delete-button"]');
     if (deleteButton) {
-      deleteButton.disabled = Boolean(t.running);
-      deleteButton.title = t.running
-        ? 'Feche o MT5 antes de excluir a instância'
+      deleteButton.disabled = actionState.deleteBlocked;
+      deleteButton.title = actionState.deleteBlocked
+        ? 'Feche o MT5 e pare a leitura antes de excluir a instância'
         : 'Exclui o cadastro e a pasta local da instância';
     }
   });
@@ -482,8 +509,8 @@ function updateWorkersStatus() {
   const alive = all.filter(w => w.alive).length;
   const connected = all.filter(w => w.connected).length;
   const el = document.getElementById('workersStatus');
-  const limit = Number(runtimeLimits.max_active_mt5 || 3);
-  el.textContent = `Leituras: ${connected} conectadas · ${alive}/${limit} ativas`;
+  const limit = activeTerminalLimit();
+  el.textContent = `Leituras: ${connected} conectadas · ${alive}/${limit || '—'} ativas`;
   el.classList.toggle('ok', connected > 0);
   const stopAllButton = document.getElementById('btnStopAll');
   stopAllButton.disabled = alive === 0;
@@ -852,7 +879,18 @@ function updateLiveProof() {
 async function loadRuntimeLimits() {
   if (!bridge?.getRuntimeLimits) return;
   const res = parseResponse(await bridge.getRuntimeLimits());
-  if (res.ok && res.data) runtimeLimits = { ...runtimeLimits, ...res.data };
+  if (res.ok && res.data) {
+    runtimeLimits = { ...runtimeLimits, ...res.data };
+    const limit = activeTerminalLimit();
+    const description = document.getElementById('activeTerminalLimitDescription');
+    if (description && limit) {
+      description.textContent = `Cadastre quantos terminais precisar. Até ${limit} podem ficar abertos/conectados simultaneamente. Abrir um MT5 também inicia sua leitura.`;
+    }
+    const hint = document.getElementById('activeTerminalLimitHint');
+    if (hint && limit) {
+      hint.textContent = `Primeira execução: abra o terminal criado e faça login manualmente no próprio MT5. A combinação Corretora + Conta não pode se repetir. Os cadastros são ilimitados; a política atual permite ${limit} MT5 simultâneos.`;
+    }
+  }
 }
 
 async function loadTerminals() {
@@ -1001,8 +1039,9 @@ async function saveTerminalEdit() {
 function openDeleteTerminal(id) {
   const terminal = terminals.find(t => t.id === id);
   if (!terminal) return toast('Terminal não encontrado.', true);
-  if (terminal.running) {
-    return toast('Feche o MT5 antes de excluir esta instância.', true);
+  const worker = workerStates[terminal.id] || terminal.worker || {};
+  if (terminal.running || worker.alive) {
+    return toast('Feche o MT5 e pare a leitura antes de excluir esta instância.', true);
   }
   document.getElementById('deleteTerminalId').value = terminal.id;
   document.getElementById('deleteTerminalConfirmation').value = '';

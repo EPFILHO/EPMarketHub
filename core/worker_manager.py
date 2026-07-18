@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from .config import MAX_ACTIVE_TERMINALS
 from .models import SymbolDefinition, TerminalProfile
 from .mt5_worker import mt5_worker_main
 from .worker_protocol import WorkerState, now_iso
@@ -26,7 +27,12 @@ class WorkerHandle:
 class MT5WorkerManager:
     """Supervisor dos processos persistentes, um por terminal MT5."""
 
-    def __init__(self, refresh_seconds: float = 2.0, live_poll_seconds: float = 0.20, max_workers: int = 3):
+    def __init__(
+        self,
+        refresh_seconds: float = 2.0,
+        live_poll_seconds: float = 0.20,
+        max_workers: int = MAX_ACTIVE_TERMINALS,
+    ):
         self.context = mp.get_context("spawn")
         self.refresh_seconds = refresh_seconds
         self.live_poll_seconds = live_poll_seconds
@@ -38,6 +44,7 @@ class MT5WorkerManager:
         self._live_slots: dict[str, dict[str, Any]] = {}
         self._live_ticks: dict[str, dict[str, Any]] = {}
         self._live_statuses: dict[str, dict[str, Any]] = {}
+        self._shutdown = False
 
     @staticmethod
     def _normalize_path(value: str) -> str:
@@ -51,6 +58,9 @@ class MT5WorkerManager:
         profile: TerminalProfile,
         symbols: Iterable[SymbolDefinition],
     ) -> tuple[bool, str]:
+        if self._shutdown:
+            return False, "O supervisor de workers já foi encerrado."
+
         existing = self._handles.get(profile.id)
         if existing and existing.process.is_alive():
             return False, "A leitura deste terminal já está ativa."
@@ -85,7 +95,19 @@ class MT5WorkerManager:
             ),
             daemon=True,
         )
-        process.start()
+        try:
+            process.start()
+        except Exception as exc:
+            self._close_queue(command_queue)
+            self._states[profile.id] = WorkerState(
+                terminal_id=profile.id,
+                state="error",
+                connected=False,
+                alive=False,
+                message=f"Não foi possível criar o processo worker: {exc}",
+            )
+            logger.exception("Falha ao criar worker para o terminal %s", profile.id)
+            return False, f"Não foi possível iniciar a leitura: {exc}"
         handle = WorkerHandle(process, command_queue, stop_event, profile.terminal_exe)
         self._handles[profile.id] = handle
         self._states[profile.id] = WorkerState(
@@ -123,13 +145,43 @@ class MT5WorkerManager:
 
         try:
             handle.command_queue.put_nowait({"action": "stop"})
-        except queue.Full:
-            pass
-        handle.stop_event.set()
-        handle.process.join(timeout=timeout)
+        except (queue.Full, OSError, ValueError, EOFError):
+            logger.warning(
+                "Fila de comandos indisponível ao parar %s; usando o evento de parada.",
+                terminal_id,
+                exc_info=True,
+            )
+        try:
+            handle.stop_event.set()
+        except Exception:
+            logger.exception("Falha ao sinalizar parada graciosa do worker %s", terminal_id)
+        try:
+            handle.process.join(timeout=timeout)
+        except Exception:
+            logger.exception("Falha ao aguardar encerramento gracioso do worker %s", terminal_id)
         if handle.process.is_alive():
-            handle.process.terminate()
-            handle.process.join(timeout=2.0)
+            try:
+                handle.process.terminate()
+                handle.process.join(timeout=2.0)
+            except Exception:
+                logger.exception("Falha ao terminar worker %s", terminal_id)
+        if handle.process.is_alive() and hasattr(handle.process, "kill"):
+            try:
+                handle.process.kill()
+                handle.process.join(timeout=2.0)
+            except Exception:
+                logger.exception("Falha ao forçar encerramento do worker %s", terminal_id)
+        if handle.process.is_alive():
+            self._states[terminal_id] = WorkerState(
+                terminal_id=terminal_id,
+                state="error",
+                connected=False,
+                alive=True,
+                message="Worker não respondeu ao encerramento forçado.",
+                pid=getattr(handle.process, "pid", None),
+            )
+            self._mark_live_terminal_stopped(terminal_id)
+            return False, "Não foi possível confirmar o encerramento do worker."
         self._cleanup_handle(terminal_id, handle)
         self._states[terminal_id] = WorkerState(
             terminal_id=terminal_id,
@@ -142,14 +194,25 @@ class MT5WorkerManager:
         return True, "Leitura persistente encerrada."
 
     def stop_all(self) -> None:
+        if self._shutdown:
+            return
         for terminal_id in list(self._handles):
-            self.stop_worker(terminal_id)
+            try:
+                self.stop_worker(terminal_id)
+            except Exception:
+                logger.exception("Falha inesperada ao encerrar worker %s", terminal_id)
+        if self.active_count():
+            logger.error(
+                "O encerramento terminou com %s worker(s) ainda vivo(s).",
+                self.active_count(),
+            )
+            return
+        self._shutdown = True
         try:
             self.event_queue.close()
             self.event_queue.join_thread()
         except Exception:
-            pass
-
+            logger.exception("Falha ao fechar a fila de eventos dos workers")
 
     def active_count(self) -> int:
         return sum(1 for handle in self._handles.values() if handle.process.is_alive())
@@ -274,6 +337,9 @@ class MT5WorkerManager:
             return True, message
         except queue.Full:
             return False, "Fila do worker ocupada; tente novamente."
+        except (OSError, ValueError, EOFError):
+            logger.exception("Fila de comandos indisponível para o worker %s", terminal_id)
+            return False, "A comunicação com o worker foi encerrada; reinicie a leitura."
 
     def poll_events(self, limit: int = 500) -> list[dict[str, Any]]:
         events: list[dict[str, Any]] = []
@@ -282,22 +348,34 @@ class MT5WorkerManager:
                 event = self.event_queue.get_nowait()
             except queue.Empty:
                 break
+            except (OSError, ValueError, EOFError):
+                logger.exception("Fila de eventos dos workers foi encerrada ou ficou indisponível")
+                break
             if not isinstance(event, dict):
                 continue
-            events.append(event)
-            self._apply_event(event)
+            if self._apply_event(event):
+                events.append(event)
 
         self._detect_dead_workers(events)
         return events
 
-    def _apply_event(self, event: dict[str, Any]) -> None:
+    def _apply_event(self, event: dict[str, Any]) -> bool:
         terminal_id = str(event.get("terminal_id", ""))
         event_type = str(event.get("event", ""))
         data = event.get("data") if isinstance(event.get("data"), dict) else {}
         if not terminal_id:
-            return
+            return False
 
         state = self._states.setdefault(terminal_id, WorkerState(terminal_id=terminal_id))
+        event_pid = self._event_pid(event_type, data)
+        if state.pid is not None and event_pid is not None and str(state.pid) != str(event_pid):
+            logger.debug(
+                "Ignorando evento residual de %s: PID %s, worker atual PID %s.",
+                terminal_id,
+                event_pid,
+                state.pid,
+            )
+            return False
         if event_type == "snapshot":
             snapshot = data.get("snapshot")
             if isinstance(snapshot, dict):
@@ -324,7 +402,7 @@ class MT5WorkerManager:
                 configured = self._live_slots.get(slot_id)
                 # Ignora ticks atrasados de um fluxo já encerrado ou de um worker anterior.
                 if not configured or str(configured.get("terminal_id", "")) != terminal_id:
-                    return
+                    return False
                 self._live_ticks[slot_id] = tick
                 current = self._live_statuses.get(slot_id, {})
                 self._live_statuses[slot_id] = {
@@ -343,7 +421,7 @@ class MT5WorkerManager:
                 configured = self._live_slots.get(slot_id)
                 # O worker pode confirmar o encerramento depois que a GUI já limpou o painel.
                 if not configured or str(configured.get("terminal_id", "")) != terminal_id:
-                    return
+                    return False
                 self._live_statuses[slot_id] = {
                     **configured,
                     **data,
@@ -356,6 +434,7 @@ class MT5WorkerManager:
             state.alive = False
             state.connected = False
             self._mark_live_terminal_stopped(terminal_id)
+        return True
 
     def _detect_dead_workers(self, events: list[dict[str, Any]]) -> None:
         for terminal_id, handle in list(self._handles.items()):
@@ -379,16 +458,32 @@ class MT5WorkerManager:
                         "data": state.to_dict(),
                     }
                 )
+            else:
+                state.alive = False
+                state.connected = False
             self._mark_live_terminal_stopped(terminal_id)
             self._cleanup_handle(terminal_id, handle)
 
     def _cleanup_handle(self, terminal_id: str, handle: WorkerHandle) -> None:
         self._handles.pop(terminal_id, None)
+        self._close_queue(handle.command_queue)
+
+    @staticmethod
+    def _close_queue(command_queue) -> None:
         try:
-            handle.command_queue.close()
-            handle.command_queue.join_thread()
+            command_queue.close()
+            command_queue.join_thread()
         except Exception:
-            pass
+            logger.exception("Falha ao fechar fila de comandos de worker")
+
+    @staticmethod
+    def _event_pid(event_type: str, data: dict[str, Any]):
+        if event_type == "live_tick":
+            tick = data.get("tick") if isinstance(data.get("tick"), dict) else {}
+            return tick.get("pid")
+        if event_type == "snapshot":
+            return data.get("pid")
+        return data.get("pid")
 
     def is_running(self, terminal_id: str) -> bool:
         handle = self._handles.get(terminal_id)

@@ -14,7 +14,7 @@
         <div class="brand-mark">EP</div>
         <div>
           <h1>Market Hub</h1>
-          <p>Base 0.4.9 · Clean Handoff</p>
+          <p>Kernel 0.4.10</p>
         </div>
       </div>
 
@@ -31,7 +31,7 @@
 
       <div class="notice neutral">
         <strong>Fluxo ao vivo.</strong>
-        <span>A Base 0.4.9 mantém a base multi-MT5 validada e a documentação limpa para o Codex.</span>
+        <span>O Kernel 0.4.10 preserva a base multi-MT5 validada e endurece suas falhas de processo e persistência.</span>
       </div>
 
       <div class="notice neutral">
@@ -63,19 +63,19 @@
             <label>Corretora</label>
             <input id="brokerName" placeholder="Ex.: Corretora Forex ou B3" />
             <label>Número da conta (obrigatório, sem senha)</label>
-            <input id="accountLogin" placeholder="Ex.: 915051" />
+            <input id="accountLogin" placeholder="Ex.: CONTA-TESTE" />
             <button class="primary" id="btnCreateTerminal" disabled>Criar instância controlada</button>
-            <div class="hint">Primeira execução: abra o terminal criado e faça login manualmente no próprio MT5. A combinação Corretora + Conta não pode se repetir. Os cadastros são ilimitados; o limite simultâneo é de 3 MT5.</div>
+            <div class="hint" id="activeTerminalLimitHint">Primeira execução: abra o terminal criado e faça login manualmente no próprio MT5. A combinação Corretora + Conta não pode se repetir. Os cadastros são ilimitados; o limite simultâneo é carregado do kernel.</div>
           </section>
 
           <section class="card">
             <div class="card-head">
               <div>
                 <h3>Terminais cadastrados</h3>
-                <p class="muted">Cadastre quantos terminais precisar. Até 3 podem ficar abertos/conectados simultaneamente. Abrir um MT5 também inicia sua leitura.</p>
+              <p class="muted" id="activeTerminalLimitDescription">O limite simultâneo é carregado da política central do kernel.</p>
               </div>
               <div class="terminal-toolbar">
-                <span id="selectionStatus" class="selection-status">Selecionados: 0 de 3</span>
+                <span id="selectionStatus" class="selection-status">Selecionados: 0</span>
                 <div class="actions compact">
                   <button id="btnOpenSelected" class="success" disabled>Abrir selecionados</button>
                   <button id="btnCloseSelected" disabled>Fechar selecionados</button>

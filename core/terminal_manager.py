@@ -196,12 +196,24 @@ class TerminalManager:
             try:
                 process.kill()
                 process.wait(timeout=2)
+                return True
+            except (psutil.NoSuchProcess, ProcessLookupError):
+                return True
+            except (subprocess.TimeoutExpired, psutil.TimeoutExpired):
+                logger.error("PID %s permaneceu vivo após terminate/kill.", pid)
+                return False
+            except (psutil.AccessDenied, PermissionError):
+                logger.exception("Sem permissão para forçar o encerramento do PID %s", pid)
+                return False
             except Exception:
-                pass
-            return True
+                logger.exception("Falha ao forçar o encerramento do PID %s", pid)
+                return False
         except (psutil.NoSuchProcess, ProcessLookupError):
             return True
         except (psutil.AccessDenied, PermissionError):
+            return False
+        except Exception:
+            logger.exception("Falha ao encerrar o PID %s", pid)
             return False
 
     def launch(self, profile: TerminalProfile, minimized: bool = True) -> subprocess.Popen | None:
@@ -285,9 +297,12 @@ class TerminalManager:
 
         stopped = 0
         for profile in profiles:
-            self.remember(profile)
-            if self.stop(profile.id, timeout=timeout, profile=profile):
-                stopped += 1
+            try:
+                self.remember(profile)
+                if self.stop(profile.id, timeout=timeout, profile=profile):
+                    stopped += 1
+            except Exception:
+                logger.exception("Falha inesperada ao encerrar o MT5 %s", profile.id)
         return stopped
 
     def is_running(self, terminal_id: str, profile: TerminalProfile | None = None) -> bool:

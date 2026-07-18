@@ -41,6 +41,44 @@ const fullCapacity = context.terminalBulkActionState(
 assert.equal(fullCapacity.openDisabled, true);
 assert.equal(fullCapacity.closeDisabled, false);
 
+const twoTerminalCapacity = context.terminalBulkActionState(
+  terminalRows,
+  new Set(['one', 'two']),
+  threeActiveWorkers,
+  2,
+);
+assert.equal(twoTerminalCapacity.openDisabled, true);
+
+const fourTerminalCapacity = context.terminalBulkActionState(
+  terminalRows,
+  new Set(['four']),
+  threeActiveWorkers,
+  4,
+);
+assert.equal(fourTerminalCapacity.openDisabled, false);
+
+const waitingWorkerActions = context.terminalActionState(
+  { id: 'one', running: true },
+  { alive: true, connected: false },
+  1,
+  1,
+  3,
+);
+assert.equal(waitingWorkerActions.readingBlocked, false);
+assert.equal(waitingWorkerActions.readingLabel, 'Parar tentativa');
+assert.equal(waitingWorkerActions.editBlocked, true);
+assert.equal(waitingWorkerActions.deleteBlocked, true);
+
+const fullWorkerCapacityActions = context.terminalActionState(
+  { id: 'four', running: false },
+  { alive: false, connected: false },
+  1,
+  2,
+  2,
+);
+assert.equal(fullWorkerCapacityActions.openBlocked, true);
+assert.equal(fullWorkerCapacityActions.readingBlocked, true);
+
 const closedBeyondCapacity = context.terminalBulkActionState(
   terminalRows,
   new Set(['four']),
@@ -137,5 +175,6 @@ assert.equal(
 );
 
 assert.doesNotMatch(source, /data-role="snapshot-button"/);
+assert.doesNotMatch(source, /max_active_mt5\s*\|\|\s*3/);
 
 console.log('web app state tests passed');

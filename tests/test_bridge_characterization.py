@@ -162,10 +162,10 @@ class FakeTerminalManager:
 
 
 class FakeWorkerManager:
-    max_workers = 3
-
-    def __init__(self) -> None:
+    def __init__(self, max_workers: int = 3) -> None:
+        self.max_workers = max_workers
         self.running_ids = set()
+        self.failed_stop_ids = set()
         self.started = []
         self.stopped = []
 
@@ -180,13 +180,15 @@ class FakeWorkerManager:
         if profile.id in self.running_ids:
             return False, "A leitura deste terminal já está ativa."
         if self.active_count() >= self.max_workers:
-            return False, "Limite de 3 conexões MT5 simultâneas atingido."
+            return False, f"Limite de {self.max_workers} conexões MT5 simultâneas atingido."
         self.running_ids.add(profile.id)
         return True, "Leitura persistente iniciada."
 
     def stop_worker(self, terminal_id: str) -> tuple[bool, str]:
         self.stopped.append(terminal_id)
         was_running = terminal_id in self.running_ids
+        if terminal_id in self.failed_stop_ids:
+            return False, "Não foi possível confirmar o encerramento do worker."
         self.running_ids.discard(terminal_id)
         return was_running, "Leitura encerrada."
 
@@ -221,12 +223,12 @@ def make_profile(tmp_path: Path, terminal_id: str) -> TerminalProfile:
     )
 
 
-def build_bridge(tmp_path: Path, terminal_ids: list[str]):
+def build_bridge(tmp_path: Path, terminal_ids: list[str], max_workers: int = 3):
     registry = TerminalRegistry(tmp_path / "terminals.json")
     for terminal_id in terminal_ids:
         registry.upsert(make_profile(tmp_path, terminal_id))
     terminal_manager = FakeTerminalManager()
-    worker_manager = FakeWorkerManager()
+    worker_manager = FakeWorkerManager(max_workers=max_workers)
     bridge = MarketHubBridge(
         terminal_registry=registry,
         symbol_registry=FakeSymbolRegistry(),
@@ -250,6 +252,31 @@ def test_start_selected_workers_opens_only_requested_terminals(tmp_path: Path) -
     assert worker_manager.running_ids == {"two", "four"}
 
 
+def test_runtime_limit_payload_uses_injected_product_policy(tmp_path: Path) -> None:
+    bridge, _, _ = build_bridge(tmp_path, ["one", "two", "three"], max_workers=4)
+
+    response = json.loads(bridge.getRuntimeLimits())
+
+    assert response["ok"] is True
+    assert response["data"]["max_active_mt5"] == 4
+
+
+def test_launch_does_not_open_mt5_when_worker_capacity_is_full(tmp_path: Path) -> None:
+    bridge, terminal_manager, worker_manager = build_bridge(
+        tmp_path,
+        ["one", "two", "three"],
+        max_workers=2,
+    )
+    worker_manager.running_ids.update({"one", "two"})
+    terminal_manager.open_ids.add("one")
+
+    response = json.loads(bridge.launchTerminal("three"))
+
+    assert response["ok"] is False
+    assert "até 2" in response["message"]
+    assert terminal_manager.launched == []
+
+
 def test_close_selected_terminals_stops_only_requested_terminal(tmp_path: Path) -> None:
     bridge, terminal_manager, worker_manager = build_bridge(
         tmp_path, ["one", "two", "three"]
@@ -264,6 +291,32 @@ def test_close_selected_terminals_stops_only_requested_terminal(tmp_path: Path) 
     assert worker_manager.running_ids == {"one", "three"}
     assert terminal_manager.stopped == ["two"]
     assert worker_manager.stopped == ["two"]
+
+
+def test_close_selected_reports_worker_that_resists_shutdown(tmp_path: Path) -> None:
+    bridge, terminal_manager, worker_manager = build_bridge(tmp_path, ["one", "two"])
+    terminal_manager.open_ids.update({"one", "two"})
+    worker_manager.running_ids.update({"one", "two"})
+    worker_manager.failed_stop_ids.add("one")
+
+    response = json.loads(bridge.closeSelectedTerminals('["one", "two"]'))
+
+    assert response["ok"] is False
+    assert "1 falha" in response["message"]
+    assert worker_manager.running_ids == {"one"}
+    assert terminal_manager.open_ids == set()
+
+
+def test_stop_worker_reports_resistant_process_as_failure(tmp_path: Path) -> None:
+    bridge, _, worker_manager = build_bridge(tmp_path, ["one"])
+    worker_manager.running_ids.add("one")
+    worker_manager.failed_stop_ids.add("one")
+
+    response = json.loads(bridge.stopWorker("one"))
+
+    assert response["ok"] is False
+    assert "confirmar" in response["message"]
+    assert response["data"]["alive"] is True
 
 
 def test_create_terminal_rejects_duplicate_broker_and_account(tmp_path: Path) -> None:
@@ -344,6 +397,32 @@ def test_update_terminal_rejects_active_worker_with_mt5_state_stale(tmp_path: Pa
     assert worker_manager.running_ids == {"one"}
     assert terminal_manager.stopped == []
     assert worker_manager.stopped == []
+
+
+def test_delete_terminal_rejects_active_worker_with_mt5_state_stale(tmp_path: Path) -> None:
+    bridge, terminal_manager, worker_manager = build_bridge(tmp_path, ["one"])
+    worker_manager.running_ids.add("one")
+
+    response = json.loads(bridge.deleteTerminal("one", "EXCLUIR"))
+
+    assert response["ok"] is False
+    assert response["message"] == "Feche o MT5 e pare a leitura antes de excluir a instância local."
+    assert bridge.terminal_registry.get("one") is not None
+    assert terminal_manager.stopped == []
+
+
+def test_stop_terminal_reports_worker_that_remains_alive(tmp_path: Path) -> None:
+    bridge, terminal_manager, worker_manager = build_bridge(tmp_path, ["one"])
+    terminal_manager.open_ids.add("one")
+    worker_manager.running_ids.add("one")
+    worker_manager.failed_stop_ids.add("one")
+
+    response = json.loads(bridge.stopTerminal("one"))
+
+    assert response["ok"] is False
+    assert response["data"]["worker_running"] is True
+    assert terminal_manager.open_ids == set()
+    assert worker_manager.running_ids == {"one"}
 
 
 def test_update_terminal_renames_instance_when_fully_stopped(tmp_path: Path) -> None:
@@ -437,6 +516,20 @@ class StaticRegistry:
         return []
 
 
+class FailingShutdownWorkerManager:
+    def __init__(self) -> None:
+        self.clear_calls = 0
+        self.stop_calls = 0
+
+    def clear_all_live_streams(self) -> None:
+        self.clear_calls += 1
+        raise RuntimeError("falha simulada ao limpar fluxos")
+
+    def stop_all(self) -> None:
+        self.stop_calls += 1
+        raise RuntimeError("falha simulada ao parar workers")
+
+
 def test_main_window_shutdown_is_idempotent() -> None:
     window = MainWindow.__new__(MainWindow)
     window._shutdown_done = False
@@ -446,6 +539,22 @@ def test_main_window_shutdown_is_idempotent() -> None:
     window.terminal_registry = StaticRegistry()
 
     window.shutdown()
+    window.shutdown()
+
+    assert window.worker_poll_timer.stop_calls == 1
+    assert window.worker_manager.clear_calls == 1
+    assert window.worker_manager.stop_calls == 1
+    assert window.terminal_manager.stop_calls == 1
+
+
+def test_main_window_shutdown_continues_after_worker_failures() -> None:
+    window = MainWindow.__new__(MainWindow)
+    window._shutdown_done = False
+    window.worker_poll_timer = CountingTimer()
+    window.worker_manager = FailingShutdownWorkerManager()
+    window.terminal_manager = CountingTerminalManager()
+    window.terminal_registry = StaticRegistry()
+
     window.shutdown()
 
     assert window.worker_poll_timer.stop_calls == 1

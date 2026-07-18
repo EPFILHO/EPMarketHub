@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import os
 import queue
 import time
@@ -12,14 +13,35 @@ from .models import SymbolDefinition, TerminalProfile
 from .mt5_connector import MT5Connector
 from .worker_protocol import WorkerEvent, now_iso
 
+logger = logging.getLogger(__name__)
 
-def _emit(event_queue, terminal_id: str, event: str, data: dict[str, Any] | None = None) -> None:
+LOSSY_EVENT_TYPES = frozenset({"heartbeat", "live_tick", "snapshot"})
+
+
+def _emit(
+    event_queue,
+    terminal_id: str,
+    event: str,
+    data: dict[str, Any] | None = None,
+) -> bool:
     payload = WorkerEvent(terminal_id=terminal_id, event=event, data=data or {}).to_dict()
     try:
         event_queue.put_nowait(payload)
+        return True
     except queue.Full:
-        # O worker nunca deve travar porque a interface ficou temporariamente lenta.
-        pass
+        if event in LOSSY_EVENT_TYPES:
+            # Cotações, snapshots e heartbeats serão renovados; nunca bloqueiam o worker.
+            return False
+        try:
+            # Eventos de ciclo de vida recebem uma chance limitada sem criar deadlock.
+            event_queue.put(payload, timeout=0.25)
+            return True
+        except queue.Full:
+            logger.error("Fila de eventos cheia; evento crítico %s não foi entregue.", event)
+            return False
+    except (EOFError, OSError, ValueError):
+        logger.exception("Fila de eventos indisponível ao emitir %s.", event)
+        return False
 
 
 def _status_payload(status) -> dict[str, Any]:
@@ -261,7 +283,12 @@ def mt5_worker_main(
                 else:
                     if force_snapshot or now >= next_snapshot:
                         snapshot = build_snapshot_from_connector(profile, connector, symbols)
-                        _emit(event_queue, profile.id, "snapshot", {"snapshot": snapshot})
+                        _emit(
+                            event_queue,
+                            profile.id,
+                            "snapshot",
+                            {"snapshot": snapshot, "pid": os.getpid()},
+                        )
                         force_snapshot = False
                         next_snapshot = now + max(0.5, refresh_seconds)
 

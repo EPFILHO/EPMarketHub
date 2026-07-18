@@ -340,7 +340,10 @@ class MarketHubBridge(QObject):
                 return fail("Terminal não encontrado.")
 
             terminal_was_open = self.terminal_manager.is_running(profile.id, profile)
-            if not terminal_was_open and self._running_mt5_count() >= self.max_active_mt5:
+            if not terminal_was_open and (
+                self._running_mt5_count() >= self.max_active_mt5
+                or self.worker_manager.active_count() >= self.max_active_mt5
+            ):
                 return fail(self._activation_limit_message())
 
             self.terminal_manager.launch(profile)
@@ -366,10 +369,17 @@ class MarketHubBridge(QObject):
     @Slot(str, result=str)
     def stopTerminal(self, terminal_id: str) -> str:
         try:
-            self.worker_manager.stop_worker(terminal_id)
+            _, worker_message = self.worker_manager.stop_worker(terminal_id)
+            worker_still_running = self.worker_manager.is_running(terminal_id)
             stopped = self.terminal_manager.stop(terminal_id)
             self._emit_terminals()
             self._emit_live_streams()
+            if worker_still_running:
+                return fail(
+                    f"O comando de fechamento do MT5 foi executado, mas o worker continua vivo: "
+                    f"{worker_message}",
+                    {"mt5_stopped": stopped, "worker_running": True},
+                )
             return ok({"stopped": stopped}, "Leitura encerrada e comando para fechar o MT5 executado.")
         except Exception as exc:
             logger.exception("Erro ao parar terminal")
@@ -382,8 +392,10 @@ class MarketHubBridge(QObject):
             return fail("Terminal não encontrado.")
         if confirmation.strip().upper() != "EXCLUIR":
             return fail('Digite EXCLUIR para confirmar a remoção da instância local.')
-        if self.terminal_manager.is_running(profile.id, profile):
-            return fail("Feche o MT5 antes de excluir a instância local.")
+        if self.terminal_manager.is_running(profile.id, profile) or self.worker_manager.is_running(
+            terminal_id
+        ):
+            return fail("Feche o MT5 e pare a leitura antes de excluir a instância local.")
 
         original_dir: Path | None = None
         staged_dir: Path | None = None
@@ -458,10 +470,13 @@ class MarketHubBridge(QObject):
     @Slot(str, result=str)
     def stopWorker(self, terminal_id: str) -> str:
         try:
-            _, message = self.worker_manager.stop_worker(terminal_id)
+            stopped, message = self.worker_manager.stop_worker(terminal_id)
             self._emit_terminals()
             self._emit_live_streams()
-            return ok(self.worker_manager.state(terminal_id).to_dict(), message)
+            state = self.worker_manager.state(terminal_id).to_dict()
+            if not stopped and self.worker_manager.is_running(terminal_id):
+                return fail(message, state)
+            return ok(state, message)
         except Exception as exc:
             logger.exception("Erro ao parar worker")
             return fail(str(exc))
@@ -552,17 +567,32 @@ class MarketHubBridge(QObject):
                 return fail(error)
             profiles_by_id = {profile.id: profile for profile in self.terminal_registry.list()}
             result: dict[str, str] = {}
+            failures = 0
             for terminal_id in terminal_ids:
                 profile = profiles_by_id.get(terminal_id)
                 if not profile:
                     result[terminal_id] = "Terminal não encontrado."
+                    failures += 1
                     continue
                 self.worker_manager.clear_live_streams_for_terminal(terminal_id)
-                self.worker_manager.stop_worker(terminal_id)
+                _, worker_message = self.worker_manager.stop_worker(terminal_id)
+                worker_still_running = self.worker_manager.is_running(terminal_id)
                 stopped = self.terminal_manager.stop(profile.id, profile=profile)
-                result[terminal_id] = "MT5 fechado." if stopped else "O MT5 já estava fechado."
+                if worker_still_running:
+                    failures += 1
+                    result[terminal_id] = (
+                        f"MT5 {'fechado' if stopped else 'já estava fechado'}, "
+                        f"mas o worker continua vivo: {worker_message}"
+                    )
+                else:
+                    result[terminal_id] = "MT5 fechado." if stopped else "O MT5 já estava fechado."
             self._emit_terminals()
             self._emit_live_streams()
+            if failures:
+                return fail(
+                    f"Terminais processados com {failures} falha(s) de encerramento.",
+                    result,
+                )
             return ok(result, "Terminais selecionados fechados.")
         except Exception as exc:
             logger.exception("Erro ao fechar terminais selecionados")
@@ -577,10 +607,18 @@ class MarketHubBridge(QObject):
     @Slot(result=str)
     def stopAllWorkers(self) -> str:
         try:
+            failures: dict[str, str] = {}
             for terminal in self.terminal_registry.list():
-                self.worker_manager.stop_worker(terminal.id)
+                _, message = self.worker_manager.stop_worker(terminal.id)
+                if self.worker_manager.is_running(terminal.id):
+                    failures[terminal.id] = message
             self._emit_terminals()
             self._emit_live_streams()
+            if failures:
+                return fail(
+                    f"{len(failures)} worker(s) não confirmaram o encerramento.",
+                    failures,
+                )
             return ok(message="Todas as leituras foram encerradas.")
         except Exception as exc:
             logger.exception("Erro ao parar todos os workers")
@@ -682,7 +720,7 @@ class MainWindow(QMainWindow):
         self.terminal_manager = terminal_manager
         self.worker_manager = worker_manager
         self._shutdown_done = False
-        self.setWindowTitle("EP Market Hub — Base 0.4.9 Clean Handoff")
+        self.setWindowTitle("EP Market Hub — Kernel 0.4.10")
         self.resize(1440, 860)
 
         self.web_view = QWebEngineView(self)

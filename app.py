@@ -26,6 +26,7 @@ configure_rendering_mode()
 
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
+from core.config import MAX_ACTIVE_TERMINALS  # noqa: E402
 from core.default_symbols import DEFAULT_SYMBOLS  # noqa: E402
 from core.paths import build_paths  # noqa: E402
 from core.symbol_registry import SymbolRegistry  # noqa: E402
@@ -66,7 +67,11 @@ def main() -> int:
     symbol_registry = SymbolRegistry(paths.symbols_file)
     symbol_registry.ensure_defaults(DEFAULT_SYMBOLS)
     terminal_manager = TerminalManager(paths.mt5_instances_dir, paths.mt5_base_dir)
-    worker_manager = MT5WorkerManager(refresh_seconds=2.0, live_poll_seconds=0.20, max_workers=3)
+    worker_manager = MT5WorkerManager(
+        refresh_seconds=2.0,
+        live_poll_seconds=0.20,
+        max_workers=MAX_ACTIVE_TERMINALS,
+    )
 
     window = MainWindow(
         terminal_registry=terminal_registry,
