@@ -4,6 +4,8 @@ Aplicativo desktop local para organizar instâncias controladas do MetaTrader 5 
 
 Esta versão continua o endurecimento da baseline funcional 0.4.7 sem introduzir funcionalidades novas. Ela corrige o estado de ações globais, bloqueia a edição de terminais ativos e melhora a recuperação de falhas ao cadastrar ou editar terminais fechados. A parte mais importante do projeto permanece preservada: até 3 terminais MT5 podem ficar abertos e conectados ao mesmo tempo, cada um em um processo Python independente.
 
+A baseline 0.4.9 foi validada manualmente no Windows em 17 de julho de 2026 com instâncias MT5 reais e conexões simultâneas, além das verificações automatizadas descritas na documentação.
+
 ## Estado da base
 
 Funciona hoje:

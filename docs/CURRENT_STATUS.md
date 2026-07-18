@@ -30,7 +30,7 @@ A 0.4.9 continua o hardening da baseline funcional 0.4.7. Ela não adiciona func
 - Snapshot individual removido dos cards; a coleta automática e o painel consolidado continuam ativos.
 - Mensagens de falha de edição visíveis no próprio modal.
 
-Esses itens possuem cobertura automatizada com fakes e testes de estado em Node. O bloqueio visual da edição, a migração do JSON local e a renomeação após fechar um MT5 real ainda devem ser confirmados no Windows antes do merge.
+Esses itens possuem cobertura automatizada com fakes e testes de regras de estado em Node. Em 17 de julho de 2026, o conjunto foi validado manualmente no Windows com MT5 reais, incluindo bloqueio visual da edição, migração dos caminhos locais, renomeação após fechar o MT5, limite simultâneo e coerência dos fluxos no Dashboard.
 
 ## Limitações conhecidas
 

@@ -89,3 +89,4 @@
 - Remoção do botão redundante **Snapshot** dos cards de terminais; snapshots automáticos e consolidados permanecem disponíveis.
 - Erros de edição ficam visíveis dentro do modal e em toast acima dos diálogos.
 - Testes automatizados para as novas condições de falha sem abrir MT5 real.
+- Baseline 0.4.9 validada manualmente no Windows com MT5 reais e conexões simultâneas em 17 de julho de 2026.

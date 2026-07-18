@@ -4,6 +4,19 @@ Este documento registra a leitura técnica feita antes das alterações de harde
 
 O documento é uma fotografia técnica e não um roadmap imutável. Mudanças estruturais continuam sujeitas a aprovação antes da implementação.
 
+O relatório integral de assunção produzido no início do trabalho foi consolidado neste documento. A baseline examinada era o commit `050a221082ea34c82d4e85a12de316fa15c33152`, mensagem **Versão 0.4.7**. Naquele momento ainda não existia a tag; ela foi criada posteriormente para preservar exatamente essa referência.
+
+## Verificações originais da 0.4.7
+
+| Verificação | Resultado na assunção |
+|---|---|
+| `python -m pytest -q` | 7 testes aprovados |
+| `python -m compileall -q .` | Aprovado |
+| `ruff check .` | 26 ocorrências de estilo e modernização |
+| `node --check web/app.js` | Aprovado |
+
+As ocorrências do Ruff envolviam exclusivamente imports, `collections.abc`, tipos modernos, aspas em anotações e `zip(strict=...)`; não foram encontrados erros sintáticos ou imports indefinidos.
+
 ## Mapa da arquitetura
 
 ```text
@@ -81,10 +94,33 @@ O supervisor impede worker duplicado para o mesmo terminal ou executável e limi
 | Pasta podia ficar órfã se a criação funcionasse e a persistência falhasse. | Corrigido na 0.4.9 com rollback restrito à área controlada. |
 | Caminhos absolutos mantinham referência à instalação anterior depois de mover o projeto. | Corrigido na 0.4.9 com persistência relativa e migração automática. |
 | Edição ativa exigia fechar, renomear, relançar e restaurar o worker. | Eliminado na 0.4.9: edição só é aceita com MT5 fechado e worker parado. |
-| Ações globais não refletiam sempre o estado dos workers. | Corrigido parcialmente na 0.4.9; faltam testes automatizados do DOM. |
+| Ações globais não refletiam sempre o estado dos workers. | Corrigido na 0.4.9 e coberto por testes de regras em Node; teste completo de DOM/QWebEngine permanece pendente. |
 | `MarketHubBridge` concentra persistência, processos, slots e payloads. | Pendente; divisão exige aprovação e caracterização prévia. |
 | `web/app.js` concentra estado, renderização, eventos e comunicação. | Pendente; divisão exige aprovação e caracterização prévia. |
 | Não há mapeamento de símbolo por terminal nem gestão automática de vencimentos B3. | Pendente no roadmap. |
+
+## Reconciliação do relatório integral após a 0.4.9
+
+Esta tabela preserva os demais achados do relatório original sem apresentá-los como se ainda descrevessem integralmente o estado atual.
+
+| Achado original | Estado em 0.4.9 |
+|---|---|
+| Ausência de `.gitignore` e JSONs reais rastreados. | Resolvido na 0.4.8; runtime, executáveis, logs e sessões estão protegidos e os exemplos seguros continuam versionados. |
+| Apenas 7 testes e 26 ocorrências Ruff. | Evoluiu para 28 testes Python, testes de regras de estado em Node, compilação limpa e Ruff limpo. |
+| Criação podia deixar pasta órfã se o cadastro falhasse. | Resolvido com rollback controlado na 0.4.9. |
+| Edição informava sucesso sem confirmar restauração do worker. | O fluxo arriscado foi eliminado: edição exige MT5 fechado e worker parado. |
+| Caminhos absolutos prendiam o cadastro ao local anterior. | Resolvido com persistência relativa e migração automática. |
+| Estado dos botões podia divergir do limite e dos workers. | Corrigido na 0.4.9 e coberto por testes de regras JavaScript; teste completo de DOM/QWebEngine continua pendente. |
+| Shutdown síncrono pode bloquear a interface em falhas resistentes. | Pendente de medição e caracterização antes de qualquer mudança de temporização. |
+| Polling de conexão pode ser excessivo. | Mantido intencionalmente durante o hardening; otimização depende de medição e nova validação com MT5 real. |
+| Eventos podem ser descartados quando a fila compartilhada enche. | Pendente; faltam prioridade, coalescimento e teste de fila cheia. |
+| Protocolo usa dicionários sem versão ou validação formal. | Pendente; contratos de payload devem ser caracterizados antes da refatoração 0.5. |
+| JSON inválido volta ao padrão sem quarentena ou recuperação explícita. | Pendente para testes de corrupção e permissão negada. |
+| `MarketHubBridge` e `web/app.js` concentram responsabilidades. | Pendente para a 0.5, condicionado à aprovação e a testes prévios. |
+| Há caminhos preliminares ou não integrados em `analytics.py`, `get_rates()` e `MarketSnapshotService`. | Pendente de decisão: integrar futuramente ou remover somente após comprovar ausência de consumidores. |
+| Não existe CI nem verificação estática de tipos. | Ruff está limpo localmente; CI e mypy/pyright continuam pendentes. |
+
+Também permanecem válidas as divergências de que `app.py` usa o modo local de dados, embora `paths.py` ofereça um modo instalado, e de que o banner de simultaneidade afirma PIDs independentes sem comparar formalmente os três PIDs. Ambas devem ser caracterizadas antes de mudanças estruturais.
 
 ## Riscos de regressão
 
@@ -137,3 +173,7 @@ O supervisor impede worker duplicado para o mesmo terminal ou executável e limi
 7. **Candles, histórico e análises:** avançar em módulos independentes depois da estabilidade operacional.
 
 Cada etapa deve permanecer pequena, verificável, reversível e validada no Windows com MT5 real quando tocar processos, sessão, WebEngine ou biblioteca `MetaTrader5`.
+
+## Fechamento da 0.4.9
+
+Em 17 de julho de 2026, a 0.4.9 foi novamente validada manualmente no Windows com instâncias MT5 reais, incluindo conexões simultâneas, edição com terminal fechado, portabilidade dos caminhos, ações em lote e coerência dos fluxos no Dashboard. Essa validação não substitui os testes pendentes de falha resistente, fila cheia, corrupção JSON e DOM/QWebEngine automatizado.
