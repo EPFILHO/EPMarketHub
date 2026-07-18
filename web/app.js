@@ -10,6 +10,7 @@ let workerSummarySignature = '';
 let dashboardTerminalSignature = '';
 const SELECTED_TERMINALS_KEY = 'ep_market_hub_selected_terminals_v1';
 let selectedTerminalIds = new Set();
+let bulkCloseInProgress = false;
 
 const LIVE_SLOT_IDS = ['live-1', 'live-2', 'live-3'];
 const LIVE_PREFERENCES = [
@@ -259,6 +260,8 @@ function updateSelectionUi() {
     const checked = selectedTerminalIds.has(input.dataset.terminalSelect);
     if (input.checked !== checked) input.checked = checked;
     input.closest('.terminal-item')?.classList.toggle('selected', checked);
+    const terminal = terminals.find(item => item.id === input.dataset.terminalSelect);
+    input.disabled = bulkCloseInProgress || !terminalInstanceReady(terminal);
   });
 
   const count = selectedTerminalIds.size;
@@ -267,16 +270,17 @@ function updateSelectionUi() {
   const closeButton = document.getElementById('btnCloseSelected');
   const state = terminalBulkActionState(terminals, selectedTerminalIds, workerStates, maxActive);
   if (openButton) {
-    openButton.disabled = state.openDisabled;
+    openButton.disabled = state.openDisabled || bulkCloseInProgress;
     openButton.title = state.openTitle;
   }
   if (closeButton) {
-    closeButton.disabled = state.closeDisabled;
+    closeButton.disabled = state.closeDisabled || bulkCloseInProgress;
     closeButton.title = state.closeTitle;
   }
 }
 
 function toggleTerminalSelection(terminalId, checked) {
+  if (bulkCloseInProgress) return;
   const maxActive = activeTerminalLimit();
   if (checked && !selectedTerminalIds.has(terminalId) && selectedTerminalIds.size >= maxActive) {
     const input = document.querySelector(`[data-terminal-select="${terminalId}"]`);
@@ -291,32 +295,57 @@ function toggleTerminalSelection(terminalId, checked) {
 
 function workerLabel(state) {
   const labels = {
-    stopped: 'leitura parada',
+    stopped: 'desconectado',
     starting: 'iniciando',
     connected: 'conectado',
     waiting_login: 'aguardando login',
+    reopening_terminal: 'reabrindo MT5',
     reconnecting: 'reconectando',
     error: 'erro'
   };
-  return labels[state] || state || 'parado';
+  return labels[state] || state || 'desconectado';
 }
 
 function workerBadgeClass(worker) {
   if (worker?.connected) return 'ok';
-  if (worker?.state === 'waiting_login' || worker?.state === 'reconnecting' || worker?.state === 'starting') return 'warn';
+  if (worker?.state === 'waiting_login' || worker?.state === 'reopening_terminal' || worker?.state === 'reconnecting' || worker?.state === 'starting') return 'warn';
   if (worker?.state === 'error') return 'bad';
   return '';
 }
 
+function terminalInstanceState(terminal) {
+  return terminal?.instance_status?.state || 'ready';
+}
+
+function terminalInstanceReady(terminal) {
+  return terminalInstanceState(terminal) === 'ready';
+}
+
+function terminalProcessLabel(terminal, worker) {
+  const instanceState = terminalInstanceState(terminal);
+  if (instanceState === 'directory_missing') return 'Instância ausente';
+  if (instanceState === 'executable_missing') return 'Executável ausente';
+  if (instanceState === 'invalid_path') return 'Caminho inválido';
+  if (worker?.state === 'reopening_terminal') return 'Reabrindo MT5';
+  return `MT5 ${terminal?.running ? 'aberto' : 'fechado'}`;
+}
+
+function terminalProcessBadgeClass(terminal, worker) {
+  if (!terminalInstanceReady(terminal)) return 'bad';
+  if (worker?.state === 'reopening_terminal') return 'warn';
+  return terminal?.running ? 'ok' : '';
+}
+
 function terminalActionState(terminal, worker, openCount, activeWorkerCount, maxActive) {
   const workerAlive = Boolean(worker?.alive);
+  const instanceReady = terminalInstanceReady(terminal);
   const capacityUnavailable = !maxActive
     || openCount >= maxActive
     || activeWorkerCount >= maxActive;
-  const openBlocked = !terminal.running && capacityUnavailable;
+  const openBlocked = !instanceReady || (!terminal.running && capacityUnavailable);
   const readingBlocked = workerAlive
     ? false
-    : (!terminal.running || !maxActive || activeWorkerCount >= maxActive);
+    : (!instanceReady || !terminal.running || !maxActive || activeWorkerCount >= maxActive);
   const readingLabel = workerAlive
     ? (worker.connected ? 'Parar leitura' : 'Parar tentativa')
     : 'Iniciar leitura';
@@ -332,13 +361,18 @@ function terminalActionState(terminal, worker, openCount, activeWorkerCount, max
     readingBlocked,
     readingLabel,
     readingTitle,
-    editBlocked: Boolean(terminal.running || workerAlive),
+    editBlocked: Boolean(!instanceReady || terminal.running || workerAlive),
     deleteBlocked: Boolean(terminal.running || workerAlive),
   };
 }
 
 function renderTerminals(rows) {
   terminals = (rows || []).slice().sort(compareTerminal);
+  const selectedCountBeforeHealthCheck = selectedTerminalIds.size;
+  terminals.forEach(terminal => {
+    if (!terminalInstanceReady(terminal)) selectedTerminalIds.delete(terminal.id);
+  });
+  if (selectedTerminalIds.size !== selectedCountBeforeHealthCheck) persistSelectedTerminals();
   terminals.forEach(t => {
     if (t.worker) workerStates[t.id] = t.worker;
   });
@@ -371,11 +405,14 @@ function renderTerminals(rows) {
     );
     const limitTitle = `Limite de ${maxActive} MT5 simultâneos atingido`;
     const selected = selectedTerminalIds.has(t.id);
+    const instanceReady = terminalInstanceReady(t);
+    const instanceMessage = t.instance_status?.message || 'Instância local indisponível.';
+    const deleteAction = instanceReady ? 'openDeleteTerminal' : 'openInstanceResolution';
     return `
       <div class="terminal-item ${selected ? 'selected' : ''}" id="terminalItem-${escapeHtml(t.id)}" data-terminal-id="${escapeHtml(t.id)}">
         <div class="terminal-select-row">
           <label class="terminal-select-label">
-            <input type="checkbox" data-terminal-select="${escapeHtml(t.id)}" ${selected ? 'checked' : ''}
+            <input type="checkbox" data-terminal-select="${escapeHtml(t.id)}" ${selected ? 'checked' : ''} ${instanceReady ? '' : 'disabled'}
                    onchange="toggleTerminalSelection('${escapeJs(t.id)}', this.checked)" />
             <span>Selecionar</span>
           </label>
@@ -386,25 +423,25 @@ function renderTerminals(rows) {
             <div class="muted">${escapeHtml(t.broker_name || 'Corretora não informada')} · ${escapeHtml(t.account_login || 'login manual')}</div>
           </div>
           <div class="badge-stack">
-            <span class="badge mt5-badge ${t.running ? 'ok' : ''}">MT5 ${t.running ? 'aberto' : 'fechado'}</span>
+            <span class="badge mt5-badge ${terminalProcessBadgeClass(t, worker)}">${escapeHtml(terminalProcessLabel(t, worker))}</span>
             <span class="badge worker-badge ${workerBadgeClass(worker)}">${escapeHtml(workerLabel(worker.state))}</span>
           </div>
         </div>
         <small class="muted path">${escapeHtml(t.terminal_exe || '')}</small>
-        <div class="worker-detail">${terminalWorkerDetailHtml(worker)}</div>
+        <div class="worker-detail">${terminalWorkerDetailHtml(worker, t)}</div>
         <div class="actions">
           <button data-role="edit-button" onclick="openEditTerminal('${escapeJs(t.id)}')"
                   ${actionState.editBlocked ? 'disabled' : ''}
                   title="${actionState.editBlocked ? 'Feche o MT5 e pare a leitura antes de editar' : 'Edita o cadastro do terminal'}">Editar</button>
           <button data-role="open-button" onclick="launchTerminal('${escapeJs(t.id)}')"
                   ${t.running || actionState.openBlocked ? 'disabled' : ''}
-                  title="${t.running ? 'MT5 já está aberto' : (actionState.openBlocked ? limitTitle : 'Abre o MT5 e inicia a leitura')}">Abrir MT5</button>
+                  title="${!instanceReady ? escapeHtml(instanceMessage) : (t.running ? 'MT5 já está aberto' : (actionState.openBlocked ? limitTitle : 'Abre o MT5 e inicia a leitura'))}">Abrir MT5</button>
           <button data-role="reading-button" class="${worker.connected ? '' : 'success'}"
                   onclick="toggleReading('${escapeJs(t.id)}')" ${actionState.readingBlocked ? 'disabled' : ''}
                   title="${actionState.readingTitle}">${actionState.readingLabel}</button>
           <button data-role="reconnect-button" onclick="reconnectWorker('${escapeJs(t.id)}')" ${worker.connected ? '' : 'disabled'}>Reconectar</button>
           <button data-role="close-button" class="danger" onclick="stopTerminal('${escapeJs(t.id)}')" ${t.running ? '' : 'disabled'}>Fechar MT5</button>
-          <button data-role="delete-button" class="danger" onclick="openDeleteTerminal('${escapeJs(t.id)}')" ${actionState.deleteBlocked ? 'disabled' : ''} title="${actionState.deleteBlocked ? 'Feche o MT5 e pare a leitura antes de excluir a instância' : 'Exclui o cadastro e a pasta local da instância'}">Excluir</button>
+          <button data-role="delete-button" class="danger" onclick="${deleteAction}('${escapeJs(t.id)}')" ${actionState.deleteBlocked ? 'disabled' : ''} title="${actionState.deleteBlocked ? 'Feche o MT5 e pare a leitura antes de resolver a instância' : (instanceReady ? 'Exclui o cadastro e a pasta local da instância' : escapeHtml(instanceMessage))}">${instanceReady ? 'Excluir' : 'Resolver'}</button>
         </div>
       </div>
     `;
@@ -418,9 +455,13 @@ function renderTerminals(rows) {
   updateLiveProof();
 }
 
-function terminalWorkerDetailHtml(worker) {
+function terminalWorkerDetailHtml(worker, terminal = null) {
+  const instanceMessage = terminal && !terminalInstanceReady(terminal)
+    ? `<span>${escapeHtml(terminal.instance_status?.message || 'Instância local indisponível.')}</span>`
+    : '';
   return `
-    <span>${escapeHtml(worker?.message || 'Leitura parada.')}</span>
+    ${instanceMessage}
+    <span>${escapeHtml(worker?.message || 'Desconectado.')}</span>
     ${worker?.pid ? `<span>PID worker: ${escapeHtml(worker.pid)}</span>` : ''}
     ${worker?.account_login ? `<span>Conta conectada: ${escapeHtml(worker.account_login)} · ${escapeHtml(worker.server || '')}</span>` : ''}
     ${worker?.last_snapshot ? `<span>Último snapshot: ${escapeHtml(worker.last_snapshot)}</span>` : ''}
@@ -442,14 +483,21 @@ function updateTerminalWorkerRows() {
       workerBadge.className = `badge worker-badge ${workerBadgeClass(worker)}`;
       setTextIfChanged(workerBadge, workerLabel(worker.state));
     }
-    setHtmlIfChanged(item.querySelector('.worker-detail'), terminalWorkerDetailHtml(worker));
+    const mt5Badge = item.querySelector('.mt5-badge');
+    if (mt5Badge) {
+      mt5Badge.className = `badge mt5-badge ${terminalProcessBadgeClass(t, worker)}`;
+      setTextIfChanged(mt5Badge, terminalProcessLabel(t, worker));
+    }
+    setHtmlIfChanged(item.querySelector('.worker-detail'), terminalWorkerDetailHtml(worker, t));
 
     const editButton = item.querySelector('[data-role="edit-button"]');
     if (editButton) {
-      const blocked = Boolean(t.running || worker.alive);
+      const blocked = Boolean(!terminalInstanceReady(t) || t.running || worker.alive);
       editButton.disabled = blocked;
       editButton.title = blocked
-        ? 'Feche o MT5 e pare a leitura antes de editar'
+        ? (!terminalInstanceReady(t)
+            ? (t.instance_status?.message || 'Resolva a instância local antes de editar')
+            : 'Feche o MT5 e pare a leitura antes de editar')
         : 'Edita o cadastro do terminal';
     }
 
@@ -465,9 +513,11 @@ function updateTerminalWorkerRows() {
     if (openButton) {
       const blocked = actionState.openBlocked;
       openButton.disabled = Boolean(t.running || blocked);
-      openButton.title = t.running
+      openButton.title = !terminalInstanceReady(t)
+        ? (t.instance_status?.message || 'Instância local indisponível')
+        : (t.running
         ? 'MT5 já está aberto'
-        : (blocked ? limitTitle : 'Abre o MT5 e inicia a leitura');
+        : (blocked ? limitTitle : 'Abre o MT5 e inicia a leitura'));
     }
 
     const readingButton = item.querySelector('[data-role="reading-button"]');
@@ -1093,6 +1143,103 @@ async function confirmDeleteTerminal() {
   }
 }
 
+function setInstanceResolutionMessage(message = '') {
+  const element = document.getElementById('instanceResolutionMessage');
+  element.textContent = message;
+  element.classList.toggle('hidden', !message);
+}
+
+function openInstanceResolution(id) {
+  const terminal = terminals.find(item => item.id === id);
+  if (!terminal) return toast('Terminal não encontrado.', true);
+  const worker = workerStates[terminal.id] || terminal.worker || {};
+  if (terminal.running || worker.alive) {
+    return toast('Feche o MT5 e pare a leitura antes de resolver esta instância.', true);
+  }
+  if (terminalInstanceReady(terminal)) {
+    return toast('A instância local está pronta. Use Excluir para removê-la.', true);
+  }
+
+  document.getElementById('instanceResolutionTerminalId').value = terminal.id;
+  document.getElementById('instanceResolutionDetails').innerHTML = `
+    <strong>${escapeHtml(terminal.label || terminal.id)}</strong>
+    <span>Corretora: ${escapeHtml(terminal.broker_name || '—')}</span>
+    <span>Conta: ${escapeHtml(terminal.account_login || '—')}</span>
+    <span>Diagnóstico: ${escapeHtml(terminal.instance_status?.message || 'Instância local indisponível.')}</span>
+    <span>Caminho esperado: ${escapeHtml(terminal.instance_status?.path || terminal.instance_dir || '—')}</span>
+  `;
+  setInstanceResolutionMessage();
+  document.getElementById('instanceResolutionModal').classList.remove('hidden');
+}
+
+function closeInstanceResolution() {
+  document.getElementById('instanceResolutionModal').classList.add('hidden');
+  setInstanceResolutionMessage();
+}
+
+function setInstanceResolutionBusy(busy, activeAction = '') {
+  const recreateButton = document.getElementById('btnRecreateTerminalInstance');
+  const removeButton = document.getElementById('btnRemoveMissingTerminal');
+  recreateButton.disabled = busy;
+  removeButton.disabled = busy;
+  recreateButton.textContent = busy && activeAction === 'recreate' ? 'Recriando...' : 'Recriar instância';
+  removeButton.textContent = busy && activeAction === 'remove' ? 'Removendo...' : 'Remover cadastro';
+}
+
+async function recreateTerminalInstance() {
+  const id = document.getElementById('instanceResolutionTerminalId').value;
+  setInstanceResolutionBusy(true, 'recreate');
+  setInstanceResolutionMessage();
+  try {
+    const res = parseResponse(await bridge.recreateTerminalInstance(id));
+    toast(res.message, !res.ok);
+    if (res.ok) {
+      closeInstanceResolution();
+      await loadTerminals();
+      await loadWorkerStates();
+    } else {
+      setInstanceResolutionMessage(res.message);
+    }
+  } catch (error) {
+    const message = error?.message || 'Falha inesperada ao recriar a instância.';
+    setInstanceResolutionMessage(message);
+    toast(message, true);
+  } finally {
+    setInstanceResolutionBusy(false);
+  }
+}
+
+async function removeMissingTerminal() {
+  const id = document.getElementById('instanceResolutionTerminalId').value;
+  setInstanceResolutionBusy(true, 'remove');
+  setInstanceResolutionMessage();
+  try {
+    const res = parseResponse(await bridge.removeMissingTerminal(id));
+    toast(res.message, !res.ok);
+    if (res.ok) {
+      delete workerStates[id];
+      delete snapshots[id];
+      selectedTerminalIds.delete(id);
+      persistSelectedTerminals();
+      Object.keys(liveTicks).forEach(slotId => {
+        if (liveTicks[slotId]?.terminal_id === id) delete liveTicks[slotId];
+      });
+      closeInstanceResolution();
+      await loadTerminals();
+      await loadWorkerStates();
+      await loadLiveStreams();
+    } else {
+      setInstanceResolutionMessage(res.message);
+    }
+  } catch (error) {
+    const message = error?.message || 'Falha inesperada ao remover o cadastro.';
+    setInstanceResolutionMessage(message);
+    toast(message, true);
+  } finally {
+    setInstanceResolutionBusy(false);
+  }
+}
+
 async function launchTerminal(id) {
   const res = parseResponse(await bridge.launchTerminal(id));
   toast(res.message, !res.ok);
@@ -1130,19 +1277,47 @@ async function openSelectedTerminals() {
   await loadTerminals();
 }
 
+function closeBatchSummary(total, failures) {
+  const closed = total - failures;
+  if (failures) {
+    return `${closed} de ${total} terminal(is) fechado(s); ${failures} falha(s).`;
+  }
+  return `${closed} terminal(is) fechado(s).`;
+}
+
 async function closeSelectedTerminals() {
   const ids = selectedTerminalList();
   if (!ids.length) return toast('Selecione pelo menos um terminal.', true);
-  const res = parseResponse(await bridge.closeSelectedTerminals(JSON.stringify(ids)));
-  toast(res.message, !res.ok);
-  if (res.ok) {
-    Object.keys(liveTicks).forEach(slotId => {
-      if (ids.includes(liveTicks[slotId]?.terminal_id)) delete liveTicks[slotId];
-    });
+  if (bulkCloseInProgress) return;
+
+  const button = document.getElementById('btnCloseSelected');
+  let failures = 0;
+  bulkCloseInProgress = true;
+  updateSelectionUi();
+  try {
+    for (let index = 0; index < ids.length; index++) {
+      const terminalId = ids[index];
+      if (button) button.textContent = `Fechando ${index + 1}/${ids.length}...`;
+      const res = parseResponse(await bridge.stopTerminal(terminalId));
+      if (res.ok) {
+        Object.keys(liveTicks).forEach(slotId => {
+          if (liveTicks[slotId]?.terminal_id === terminalId) delete liveTicks[slotId];
+        });
+      } else {
+        failures += 1;
+        const terminal = terminals.find(item => item.id === terminalId);
+        toast(`${terminal?.label || terminalId}: ${res.message}`, true);
+      }
+      await loadWorkerStates();
+      await loadTerminals();
+      await loadLiveStreams();
+    }
+  } finally {
+    bulkCloseInProgress = false;
+    if (button) button.textContent = 'Fechar selecionados';
+    updateSelectionUi();
   }
-  await loadWorkerStates();
-  await loadTerminals();
-  await loadLiveStreams();
+  toast(closeBatchSummary(ids.length, failures), failures > 0);
 }
 
 async function stopAllWorkers() {
@@ -1246,6 +1421,7 @@ window.addEventListener('DOMContentLoaded', () => {
       closeEnhancedSelects();
       closeEditTerminal();
       closeDeleteTerminal();
+      closeInstanceResolution();
     }
   });
   document.querySelectorAll('.nav-item').forEach(btn => btn.addEventListener('click', () => switchView(btn.dataset.view)));
@@ -1253,8 +1429,11 @@ window.addEventListener('DOMContentLoaded', () => {
   document.getElementById('btnSaveTerminalEdit').addEventListener('click', saveTerminalEdit);
   document.querySelectorAll('[data-close-edit]').forEach(el => el.addEventListener('click', closeEditTerminal));
   document.querySelectorAll('[data-close-delete]').forEach(el => el.addEventListener('click', closeDeleteTerminal));
+  document.querySelectorAll('[data-close-instance-resolution]').forEach(el => el.addEventListener('click', closeInstanceResolution));
   document.getElementById('deleteTerminalConfirmation').addEventListener('input', updateDeleteConfirmationState);
   document.getElementById('btnConfirmDeleteTerminal').addEventListener('click', confirmDeleteTerminal);
+  document.getElementById('btnRecreateTerminalInstance').addEventListener('click', recreateTerminalInstance);
+  document.getElementById('btnRemoveMissingTerminal').addEventListener('click', removeMissingTerminal);
   document.getElementById('btnReloadTerminals').addEventListener('click', reloadTerminals);
   document.getElementById('btnReloadSymbols').addEventListener('click', loadSymbols);
   document.getElementById('btnOpenSelected').addEventListener('click', openSelectedTerminals);

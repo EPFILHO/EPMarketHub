@@ -78,6 +78,42 @@ const fullWorkerCapacityActions = context.terminalActionState(
 );
 assert.equal(fullWorkerCapacityActions.openBlocked, true);
 assert.equal(fullWorkerCapacityActions.readingBlocked, true);
+assert.equal(context.workerLabel('stopped'), 'desconectado');
+assert.equal(context.workerLabel(''), 'desconectado');
+assert.equal(context.workerLabel('reopening_terminal'), 'reabrindo MT5');
+assert.equal(
+  context.terminalProcessLabel(
+    { running: true, instance_status: { state: 'ready' } },
+    { state: 'reopening_terminal' },
+  ),
+  'Reabrindo MT5',
+);
+assert.equal(
+  context.terminalProcessLabel(
+    { running: false, instance_status: { state: 'directory_missing' } },
+    { state: 'stopped' },
+  ),
+  'Instância ausente',
+);
+const missingInstanceActions = context.terminalActionState(
+  { running: false, instance_status: { state: 'directory_missing' } },
+  { alive: false },
+  0,
+  0,
+  3,
+);
+assert.equal(missingInstanceActions.openBlocked, true);
+assert.equal(missingInstanceActions.readingBlocked, true);
+assert.equal(missingInstanceActions.editBlocked, true);
+assert.equal(missingInstanceActions.deleteBlocked, false);
+assert.equal(context.closeBatchSummary(3, 0), '3 terminal(is) fechado(s).');
+assert.equal(
+  context.closeBatchSummary(3, 1),
+  '2 de 3 terminal(is) fechado(s); 1 falha(s).',
+);
+const progressiveCloseSource = context.closeSelectedTerminals.toString();
+assert.match(progressiveCloseSource, /bridge\.stopTerminal\(terminalId\)/);
+assert.doesNotMatch(progressiveCloseSource, /bridge\.closeSelectedTerminals/);
 
 const closedBeyondCapacity = context.terminalBulkActionState(
   terminalRows,
