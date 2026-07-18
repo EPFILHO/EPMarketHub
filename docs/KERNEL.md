@@ -41,6 +41,8 @@ Não pertencem ao kernel:
 8. Uma falha de escrita não substitui o último JSON válido por conteúdo parcial.
 9. Uma falha parcial de cadastro, edição ou exclusão é compensada ou registrada de forma recuperável.
 10. O shutdown pode ser chamado mais de uma vez sem repetir efeitos destrutivos.
+11. Um worker ainda vivo impede o fechamento do MT5 que ele supervisiona, evitando reabertura automática após uma parada incompleta.
+12. Eventos tardios do worker não apagam falhas confirmadas de abertura ou fechamento do processo MT5.
 
 ## Política do limite simultâneo
 
@@ -52,17 +54,29 @@ interface.
 O supervisor aceita injeção do limite para que os testes cubram valores como
 `2`, `3` e `4`. Em produção, `app.py` sempre usa a política central.
 
-## Estados observáveis do worker
+## Estados observáveis
 
-| Estado | Processo vivo | Conectado | Significado |
-|---|---:|---:|---|
-| `stopped` | não | não | leitura não iniciada ou encerrada |
-| `starting` | sim | não | processo criado, aguardando primeira conexão |
-| `waiting_login` | sim | não | MT5 aberto sem conta autenticada |
-| `reopening_terminal` | sim | não | worker detectou o MT5 fechado e aguarda reabertura controlada |
-| `reconnecting` | sim | não | conexão perdida ou tentativa em andamento |
-| `connected` | sim | sim | biblioteca conectada ao terminal específico |
-| `error` | não ou resistente | não | falha inesperada ou encerramento não confirmado |
+Os valores do ciclo do processo, do worker e da conexão, assim como as regras de
+classificação, vivem em `core/terminal_states.py`. O estado observável é composto
+por três eixos independentes:
+
+| Eixo | Estados principais |
+|---|---|
+| integridade | `ready`, `directory_missing`, `executable_missing`, `invalid_path` |
+| processo MT5 | `closed`, `opening`, `open`, `closing`, `reopening`, `launch_failed`, `close_failed`, `duplicate_process` |
+| worker/conexão | `stopped`, `starting`, `stopping`, `waiting_login`, `authentication_failed`, `account_mismatch`, `broker_disconnected`, `reconnecting`, `connected`, `configuration_error`, `terminal_mismatch`, `unresponsive`, `attention_required`, `worker_start_failed`, `worker_crashed`, `stop_failed`, `error` |
+
+O processo estar aberto não significa que a conexão esteja autenticada. O badge
+do processo nunca é deduzido apenas do estado da biblioteca. Da mesma forma, um
+worker vivo não é considerado conectado sem `account_info`, identidade esperada,
+caminho correto e conexão da corretora confirmados.
+
+Uma anomalia `duplicate_process` bloqueia novas leituras, mas mantém disponíveis
+as ações de parada e fechamento necessárias para reconciliar a instância.
+
+O número real da conta conectada deve corresponder a `account_login`. O nome
+livre da corretora não é comparado ao servidor, mas servidor e empresa detectados
+continuam expostos para diagnóstico. A aplicação nunca lê nem armazena senha.
 
 Eventos de uma execução anterior do mesmo terminal não podem sobrescrever o
 estado da execução atual. Eventos volumosos de cotação podem ser descartados se
@@ -77,6 +91,7 @@ O fechamento do kernel cobre e testa:
 - falha ao criar o processo worker;
 - worker que exige `terminate()` ou `kill()`;
 - worker que permanece vivo mesmo após encerramento forçado;
+- tentativa de fechar o MT5 enquanto seu worker permanece vivo;
 - fila de comandos cheia durante uma solicitação;
 - fila de eventos congestionada;
 - evento residual de um PID anterior;
@@ -85,7 +100,13 @@ O fechamento do kernel cobre e testa:
 - pasta da instância ou `terminal64.exe` removido fora do aplicativo;
 - JSON vazio, inválido, com codificação danificada ou inacessível;
 - falha ao promover o arquivo temporário da escrita atômica;
-- chamada repetida de shutdown.
+- chamada repetida de shutdown;
+- conta autenticada diferente da identidade cadastrada;
+- biblioteca ligada a outro diretório de terminal;
+- worker vivo sem atividade observável pelo supervisor;
+- mais de um processo para o mesmo executável;
+- tentativa de fechamento que deixa o processo vivo.
+- evento tardio que tenta apagar uma falha de processo já confirmada.
 
 "Falha segura" significa preservar o último dado válido, não misturar sessões,
 não afetar outros terminais e retornar ou registrar um estado explícito. Não

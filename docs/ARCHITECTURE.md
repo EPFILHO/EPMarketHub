@@ -6,6 +6,7 @@
 app.py
   └─ MainWindow / MarketHubBridge
        ├─ core/config.py (política interna de capacidade)
+       ├─ core/terminal_states.py (vocabulário e classificação de estados)
        ├─ TerminalRegistry
        ├─ TerminalManager
        ├─ SymbolRegistry
@@ -60,6 +61,11 @@ Tipos importantes de mensagens:
 Eventos carregam a identidade do processo. O supervisor descarta mensagens residuais de um PID anterior, usa entrega não bloqueante para eventos volumosos e uma espera curta e limitada para eventos críticos. A parada começa graciosa e escala para `terminate()` e `kill()` quando necessário; um processo resistente permanece visível como erro.
 
 O frontend recebe o estado por métodos expostos no QWebChannel e renderiza apenas terminais conectados no Dashboard.
+
+O estado de um cadastro não é reduzido a um único rótulo. `terminal_states.py`
+mantém separadas a integridade da instância, a existência/transição do processo
+`terminal64.exe` e a conexão do worker. Assim, por exemplo, **MT5 aberto / Falha
+de autenticação** é diferente de **Reabrindo MT5 / Reconectando**.
 
 ## Persistência e recuperação
 

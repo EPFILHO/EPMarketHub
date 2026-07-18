@@ -30,6 +30,11 @@ A 0.4.10 fecha o primeiro ciclo de hardening do kernel construído sobre a basel
 - Exclusão confirmada de cadastro sem pasta conclui a remoção diretamente; a tela de edição nunca remove cadastro e encaminha a inconsistência ao fluxo **Resolver**.
 - Uma pasta existente sem cadastro é tratada como órfã e só pode ser adotada por ação explícita, sem apagar a sessão local nem sobrescrever seus arquivos.
 - Perda de comunicação IPC é distinta de ausência de login e atualiza os badges de processo e worker durante a transição.
+- Estados são definidos em `core/terminal_states.py` e apresentados em eixos independentes de instância, processo e worker/conexão.
+- Conta autenticada diferente da cadastrada e conexão a outro diretório MT5 são rejeitadas antes de fornecer dados ao restante do sistema.
+- Falhas de autenticação, corretora offline, configuração permanente, worker sem resposta, processo duplicado e fechamento resistente possuem diagnóstico próprio.
+- Processo duplicado bloqueia nova leitura; worker resistente impede fechar seu MT5 e evita relançamento contraditório após uma parada incompleta.
+- Eventos tardios do worker não apagam falhas confirmadas de abertura ou fechamento do processo.
 - Fechamento em lote é apresentado progressivamente e worker parado aparece como **Desconectado**.
 - A instalação de teste é atualizada apenas por `scripts/sync_test_copy.ps1`, sem operações Git nem cópia de dados locais.
 
@@ -40,6 +45,7 @@ A 0.4.10 fecha o primeiro ciclo de hardening do kernel construído sobre a basel
 - Ciclo de cadastro, exclusão, relançamento simultâneo de três MT5 e fluxos foi validado manualmente em 18 de julho de 2026.
 - Os fluxos iniciais de reconciliação de instância ausente foram validados manualmente em 18 de julho de 2026.
 - A adoção de pasta órfã e a reconciliação visual final de perda IPC permanecem pendentes de validação manual antes de integrar a versão.
+- A máquina de estados ampliada permanece pendente de validação manual com MT5 real antes de integrar a versão.
 
 ## Fora do kernel e limitações conhecidas
 

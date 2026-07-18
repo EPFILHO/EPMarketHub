@@ -109,7 +109,14 @@
 - Exclusão já confirmada remove diretamente o cadastro de uma instância ausente, sem repetir a decisão no fluxo de resolução.
 - Pastas órfãs recuperadas fora do aplicativo podem ser adotadas explicitamente, preservando seus arquivos e sem sobrescrita automática.
 - Pasta ausente interrompe o worker correspondente para evitar tentativas e logs repetidos.
-- Falhas IPC são diferenciadas da ausência de login e atualizam imediatamente os estados **MT5 sem comunicação / Reconectando** antes da reabertura.
+- Falhas IPC são diferenciadas da ausência de login; o processo permanece **MT5 aberto** enquanto o worker apresenta **Reconectando** até confirmar eventual reabertura.
+- Máquina de estados centralizada separa integridade da instância, ciclo do processo MT5 e conexão do worker.
+- Abertura, fechamento, reabertura e suas falhas possuem estados transitórios explícitos, com pós-condição real do processo.
+- Autenticação recusada, conta conectada divergente, corretora offline, terminal divergente e configuração inválida deixam de aparecer como reconexão genérica.
+- Supervisor sinaliza worker sem resposta, queda inesperada, falha de criação e resistência ao encerramento sem declarar sucesso falso.
+- Mais de um processo do mesmo executável é exposto como anomalia e tentativas transitórias prolongadas passam a exigir atenção.
+- Processos duplicados bloqueiam nova leitura até o fechamento, e um worker resistente mantém seu MT5 aberto para impedir reabertura automática contraditória.
+- Eventos tardios do worker não apagam falhas de abertura ou fechamento já confirmadas.
 - Todos os consumidores da fila passam pelo mesmo despachante, impedindo uma atualização da tela de descartar eventos de relançamento.
 - Fechamento dos terminais selecionados atualiza cada card conforme sua operação termina.
 - Estado visual de worker parado passa a ser apresentado como **Desconectado**.

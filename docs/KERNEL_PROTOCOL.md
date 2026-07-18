@@ -72,6 +72,12 @@ versão do protocolo e testes de compatibilidade.
 O PID identifica a execução proprietária. O supervisor rejeita eventos de uma
 execução anterior antes que alcancem a bridge.
 
+O campo `data.state` usa o vocabulário de `core/terminal_states.py`. Novos
+valores desta versão são extensões compatíveis do protocolo v1: o envelope, os
+tipos de comando/evento e os campos obrigatórios permanecem inalterados.
+Consumidores devem preservar valores desconhecidos como diagnóstico, sem
+convertê-los silenciosamente em `connected`.
+
 ## Reabertura controlada
 
 Quando o usuário fecha diretamente a janela do MT5 enquanto seu worker continua
@@ -83,15 +89,23 @@ ativo:
 4. a detecção por caminho completo impede abrir uma segunda cópia;
 5. no ciclo de reconexão já existente, o worker conecta novamente ao mesmo MT5.
 
-Uma falha IPC com o processo ainda detectável é apresentada como **MT5 sem
-comunicação / Reconectando**. Quando a ausência do processo é confirmada, o estado
+Uma falha IPC com o processo ainda detectável é apresentada como **MT5 aberto /
+Reconectando**. Quando a ausência do processo é confirmada, o estado
 passa a `reopening_terminal` e a interface apresenta **Reabrindo MT5 /
 Reconectando**. Se a pasta ou o executável tiver desaparecido, a bridge
 encerra o worker e exige reconciliação explícita, evitando tentativas e logs
 repetidos.
 
-Fechar o terminal pela interface primeiro encerra o worker; por isso não dispara
-reabertura automática.
+Autenticação recusada, conta divergente, corretora offline e terminal divergente
+não emitem `connected`. Erros transitórios continuam sendo tentados pelo ciclo
+existente; após tentativas prolongadas, `attention_required` torna explícita a
+necessidade de intervenção sem interromper automaticamente o worker.
+
+Fechar o terminal pela interface primeiro encerra o worker. O MT5 só é fechado
+depois que a morte do worker é confirmada; se o worker resistir, ambos permanecem
+explicitamente em falha para nova tentativa, sem criar um ciclo de reabertura.
+Eventos tardios de encerramento ou erro concluem apenas transições de abertura e
+jamais apagam `launch_failed` ou `close_failed` já confirmados.
 
 ## Entrega e congestionamento
 

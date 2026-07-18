@@ -21,6 +21,7 @@ Funciona hoje:
 - Teste ao vivo com até 3 fluxos simultâneos.
 - Resolução de aliases de símbolos, priorizando símbolos tradáveis e com cotação válida.
 - Fechamento dos workers e MT5 controlados ao encerrar o app.
+- Máquina de estados do kernel separa integridade local, processo MT5 e conexão do worker, incluindo falhas de autenticação, identidade e encerramento.
 
 Ainda não existe:
 
