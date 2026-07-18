@@ -18,6 +18,10 @@ from core.symbol_registry import SymbolRegistry
 from core.terminal_manager import TerminalManager
 from core.terminal_registry import TerminalRegistry
 from core.worker_manager import MT5WorkerManager
+from core.worker_protocol import (
+    WORKER_IMMEDIATE_STATE_EVENT_TYPES,
+    WORKER_STATE_EVENT_TYPES,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -65,6 +69,14 @@ class MarketHubBridge(QObject):
         """Migra pastas antigas em minúsculas para o padrão CORRETORA-CONTA."""
 
         for profile in self.terminal_registry.list():
+            instance_status = self.terminal_manager.instance_status(profile)
+            if not instance_status["ready"]:
+                logger.warning(
+                    "Normalização da instância %s adiada: %s",
+                    profile.id,
+                    instance_status["message"],
+                )
+                continue
             desired_slug = self.terminal_manager.build_instance_slug(
                 profile.broker_name, profile.account_login
             )
@@ -95,6 +107,14 @@ class MarketHubBridge(QObject):
             "ao mesmo tempo. Os demais podem permanecer cadastrados."
         )
 
+    def _instance_unavailable(self, profile: TerminalProfile) -> tuple[dict, str | None]:
+        status = self.terminal_manager.instance_status(profile)
+        if status["ready"]:
+            return status, None
+        return status, (
+            f"{status['message']} Escolha Recriar instância ou Remover cadastro para resolver."
+        )
+
     def _terminals_payload(self) -> list[dict]:
         rows: list[dict] = []
         terminals = sorted(
@@ -107,6 +127,7 @@ class MarketHubBridge(QObject):
         )
         for terminal in terminals:
             item = terminal.to_dict()
+            item["instance_status"] = self.terminal_manager.instance_status(terminal)
             item["running"] = self.terminal_manager.is_running(terminal.id, terminal)
             item["worker"] = self.worker_manager.state(terminal.id).to_dict()
             rows.append(item)
@@ -128,6 +149,7 @@ class MarketHubBridge(QObject):
         should_emit_state = False
         force_state_emit = False
         should_emit_live = False
+        should_emit_terminals = False
         for event in events:
             event_type = event.get("event")
             data = event.get("data") if isinstance(event.get("data"), dict) else {}
@@ -137,6 +159,37 @@ class MarketHubBridge(QObject):
                 self.liveTickChanged.emit(json.dumps(data["tick"], ensure_ascii=False))
             elif event_type == "live_status":
                 should_emit_live = True
+            elif event_type == "terminal_restart_required":
+                terminal_id = str(event.get("terminal_id", ""))
+                profile = self.terminal_registry.get(terminal_id)
+                if (
+                    profile
+                    and self.worker_manager.is_running(terminal_id)
+                    and not self.terminal_manager.is_running(terminal_id, profile)
+                ):
+                    instance_status = self.terminal_manager.instance_status(profile)
+                    if not instance_status["ready"]:
+                        self.worker_manager.stop_worker(terminal_id)
+                        should_emit_terminals = True
+                        should_emit_live = True
+                        logger.error(
+                            "Reabertura do MT5 %s cancelada: %s",
+                            terminal_id,
+                            instance_status["message"],
+                        )
+                    else:
+                        try:
+                            self.terminal_manager.launch(profile, minimized=True)
+                            should_emit_terminals = True
+                            logger.info(
+                                "MT5 %s reaberto minimizado após fechamento externo.",
+                                terminal_id,
+                            )
+                        except Exception:
+                            logger.exception(
+                                "Falha ao reabrir minimizado o MT5 %s solicitado pelo worker",
+                                terminal_id,
+                            )
 
             if event_type == "error":
                 logger.error(
@@ -145,9 +198,9 @@ class MarketHubBridge(QObject):
                     data.get("message", "erro não especificado"),
                     data.get("traceback", ""),
                 )
-            if event_type in {"started", "status", "heartbeat", "stopped", "error", "snapshot"}:
+            if event_type in WORKER_STATE_EVENT_TYPES:
                 should_emit_state = True
-            if event_type in {"started", "status", "stopped", "error"}:
+            if event_type in WORKER_IMMEDIATE_STATE_EVENT_TYPES:
                 force_state_emit = True
 
         if should_emit_state:
@@ -158,25 +211,27 @@ class MarketHubBridge(QObject):
                 self._last_worker_state_emit = now
         if should_emit_live:
             self._emit_live_streams()
+        if should_emit_terminals:
+            self._emit_terminals()
 
     @Slot(result=str)
     def getTerminals(self) -> str:
-        self.worker_manager.poll_events()
+        self.poll_worker_events()
         return ok(self._terminals_payload())
 
     @Slot(result=str)
     def getWorkerStates(self) -> str:
-        self.worker_manager.poll_events()
+        self.poll_worker_events()
         return ok(self.worker_manager.states_payload([t.id for t in self.terminal_registry.list()]))
 
     @Slot(result=str)
     def getSnapshots(self) -> str:
-        self.worker_manager.poll_events()
+        self.poll_worker_events()
         return ok(self.worker_manager.snapshots_payload())
 
     @Slot(result=str)
     def getLiveStreams(self) -> str:
-        self.worker_manager.poll_events()
+        self.poll_worker_events()
         return ok(self.worker_manager.live_streams_payload())
 
     @Slot(result=str)
@@ -269,6 +324,13 @@ class MarketHubBridge(QObject):
         ):
             return fail("Feche o MT5 e pare a leitura antes de editar este terminal.")
 
+        instance_status, instance_error = self._instance_unavailable(profile)
+        if instance_error:
+            return fail(
+                instance_error,
+                {"reason": "instance_unavailable", "instance_status": instance_status},
+            )
+
         validation = self._validate_terminal_fields(label, broker_name, account_login)
         if validation:
             return fail(validation)
@@ -339,6 +401,13 @@ class MarketHubBridge(QObject):
             if not profile:
                 return fail("Terminal não encontrado.")
 
+            instance_status, instance_error = self._instance_unavailable(profile)
+            if instance_error:
+                return fail(
+                    instance_error,
+                    {"reason": "instance_unavailable", "instance_status": instance_status},
+                )
+
             terminal_was_open = self.terminal_manager.is_running(profile.id, profile)
             if not terminal_was_open and (
                 self._running_mt5_count() >= self.max_active_mt5
@@ -397,6 +466,13 @@ class MarketHubBridge(QObject):
         ):
             return fail("Feche o MT5 e pare a leitura antes de excluir a instância local.")
 
+        instance_status, instance_error = self._instance_unavailable(profile)
+        if instance_error:
+            return fail(
+                instance_error,
+                {"reason": "instance_unavailable", "instance_status": instance_status},
+            )
+
         original_dir: Path | None = None
         staged_dir: Path | None = None
         try:
@@ -438,11 +514,78 @@ class MarketHubBridge(QObject):
             return fail(str(exc))
 
     @Slot(str, result=str)
+    def recreateTerminalInstance(self, terminal_id: str) -> str:
+        profile = self.terminal_registry.get(terminal_id)
+        if not profile:
+            return fail("Terminal não encontrado.")
+        if self.terminal_manager.is_running(profile.id, profile) or self.worker_manager.is_running(
+            terminal_id
+        ):
+            return fail("Feche o MT5 e pare a leitura antes de recriar a instância local.")
+
+        try:
+            previous_status = self.terminal_manager.instance_status(profile)
+            terminal_exe = self.terminal_manager.repair_instance_from_base(profile)
+            profile.instance_dir = str(terminal_exe.parent)
+            profile.terminal_exe = str(terminal_exe)
+            self.terminal_manager.remember(profile)
+            self._emit_terminals()
+            return ok(
+                {
+                    "terminal": profile.to_dict(),
+                    "previous_instance_status": previous_status,
+                    "instance_status": self.terminal_manager.instance_status(profile),
+                },
+                "Instância local recriada. Abra o MT5 e faça login manualmente novamente.",
+            )
+        except Exception as exc:
+            logger.exception("Erro ao recriar instância local do terminal %s", terminal_id)
+            return fail(str(exc))
+
+    @Slot(str, result=str)
+    def removeMissingTerminal(self, terminal_id: str) -> str:
+        profile = self.terminal_registry.get(terminal_id)
+        if not profile:
+            return fail("Terminal não encontrado.")
+        if self.terminal_manager.is_running(profile.id, profile) or self.worker_manager.is_running(
+            terminal_id
+        ):
+            return fail("Feche o MT5 e pare a leitura antes de remover este cadastro.")
+
+        instance_status = self.terminal_manager.instance_status(profile)
+        if instance_status["ready"]:
+            return fail(
+                "A instância local existe. Use a exclusão normal para remover cadastro e pasta."
+            )
+
+        try:
+            self.worker_manager.clear_live_streams_for_terminal(terminal_id)
+            if not self.terminal_registry.remove(terminal_id):
+                return fail("Não foi possível remover o cadastro do terminal.")
+            self.worker_manager.forget_terminal(terminal_id)
+            self.terminal_manager.forget(terminal_id)
+            self._emit_terminals()
+            self._emit_live_streams()
+            return ok(
+                {"terminal_id": terminal_id, "instance_status": instance_status},
+                "Cadastro local removido. Nenhuma pasta ou conta na corretora foi alterada.",
+            )
+        except Exception as exc:
+            logger.exception("Erro ao remover cadastro com instância ausente")
+            return fail(str(exc))
+
+    @Slot(str, result=str)
     def startWorker(self, terminal_id: str) -> str:
         try:
             profile = self.terminal_registry.get(terminal_id)
             if not profile:
                 return fail("Terminal não encontrado.")
+            instance_status, instance_error = self._instance_unavailable(profile)
+            if instance_error:
+                return fail(
+                    instance_error,
+                    {"reason": "instance_unavailable", "instance_status": instance_status},
+                )
             if not self.terminal_manager.is_running(profile.id, profile):
                 return fail("Abra o MT5 antes de iniciar a leitura.")
 
@@ -522,6 +665,10 @@ class MarketHubBridge(QObject):
                 profile = profiles_by_id[terminal_id]
                 if not profile.enabled:
                     result[terminal_id] = "Terminal desativado."
+                    continue
+                _, instance_error = self._instance_unavailable(profile)
+                if instance_error:
+                    result[terminal_id] = instance_error
                     continue
                 if self.worker_manager.is_running(profile.id):
                     result[terminal_id] = "A leitura deste terminal já está ativa."
@@ -661,16 +808,22 @@ class MarketHubBridge(QObject):
             profile = self.terminal_registry.get(terminal_id)
             if not profile:
                 return fail("Terminal do fluxo não encontrado.")
+            instance_status, instance_error = self._instance_unavailable(profile)
+            if instance_error:
+                return fail(
+                    instance_error,
+                    {"reason": "instance_unavailable", "instance_status": instance_status},
+                )
             symbol = self.symbol_registry.get(symbol_id)
             if not symbol or not symbol.enabled:
                 return fail("Ativo do fluxo não encontrado ou inativo.")
 
             if not self.worker_manager.is_running(terminal_id):
-                if (
-                    not self.terminal_manager.is_running(profile.id, profile)
-                    and self._running_mt5_count() >= self.max_active_mt5
-                ):
-                    return fail(self._activation_limit_message())
+                terminal_is_open = self.terminal_manager.is_running(profile.id, profile)
+                if not terminal_is_open:
+                    if self._running_mt5_count() >= self.max_active_mt5:
+                        return fail(self._activation_limit_message())
+                    self.terminal_manager.launch(profile, minimized=True)
                 started, start_message = self.worker_manager.start_worker(
                     profile,
                     self.symbol_registry.list(enabled_only=True),

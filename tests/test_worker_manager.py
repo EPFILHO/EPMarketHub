@@ -6,6 +6,7 @@ import pytest
 from core.config import MAX_ACTIVE_TERMINALS
 from core.models import TerminalProfile
 from core.worker_manager import MT5WorkerManager
+from core.worker_protocol import WORKER_PROTOCOL_VERSION
 
 
 class FakeQueue:
@@ -344,6 +345,7 @@ def test_residual_event_is_not_forwarded_to_bridge(manager: MT5WorkerManager) ->
     current_pid = manager.state("current").pid
     manager.event_queue.items.append(
         {
+            "protocol_version": WORKER_PROTOCOL_VERSION,
             "terminal_id": "current",
             "event": "heartbeat",
             "data": {
@@ -361,6 +363,7 @@ def test_current_worker_event_is_applied_and_forwarded(manager: MT5WorkerManager
     manager.start_worker(profile("current"), [])
     current_pid = manager.state("current").pid
     event = {
+        "protocol_version": WORKER_PROTOCOL_VERSION,
         "terminal_id": "current",
         "event": "heartbeat",
         "data": {

@@ -11,7 +11,7 @@ from typing import Any
 from .config import MAX_ACTIVE_TERMINALS
 from .models import SymbolDefinition, TerminalProfile
 from .mt5_worker import mt5_worker_main
-from .worker_protocol import WorkerState, now_iso
+from .worker_protocol import WorkerEvent, WorkerState, now_iso, valid_worker_event, worker_command
 
 logger = logging.getLogger(__name__)
 
@@ -144,7 +144,7 @@ class MT5WorkerManager:
             return False, "A leitura deste terminal já está parada."
 
         try:
-            handle.command_queue.put_nowait({"action": "stop"})
+            handle.command_queue.put_nowait(worker_command("stop"))
         except (queue.Full, OSError, ValueError, EOFError):
             logger.warning(
                 "Fila de comandos indisponível ao parar %s; usando o evento de parada.",
@@ -188,7 +188,7 @@ class MT5WorkerManager:
             state="stopped",
             connected=False,
             alive=False,
-            message="Leitura encerrada.",
+            message="Desconectado.",
         )
         self._mark_live_terminal_stopped(terminal_id)
         return True, "Leitura persistente encerrada."
@@ -232,13 +232,13 @@ class MT5WorkerManager:
         self.clear_live_streams_for_terminal(terminal_id)
 
     def request_snapshot(self, terminal_id: str) -> tuple[bool, str]:
-        return self._send_command(terminal_id, {"action": "snapshot"}, "Snapshot solicitado.")
+        return self._send_command(terminal_id, worker_command("snapshot"), "Snapshot solicitado.")
 
     def request_reconnect(self, terminal_id: str) -> tuple[bool, str]:
-        return self._send_command(terminal_id, {"action": "reconnect"}, "Reconexão solicitada.")
+        return self._send_command(terminal_id, worker_command("reconnect"), "Reconexão solicitada.")
 
     def update_symbols(self, symbols: Iterable[SymbolDefinition]) -> None:
-        payload = {"action": "update_symbols", "symbols": [s.to_dict() for s in symbols]}
+        payload = worker_command("update_symbols", symbols=[s.to_dict() for s in symbols])
         for terminal_id in list(self._handles):
             self._send_command(terminal_id, payload, "")
 
@@ -258,7 +258,7 @@ class MT5WorkerManager:
         if previous and previous.get("terminal_id") != profile.id:
             self._send_command(
                 str(previous.get("terminal_id")),
-                {"action": "clear_live_stream", "slot_id": slot_id},
+                worker_command("clear_live_stream", slot_id=slot_id),
                 "",
             )
 
@@ -281,7 +281,7 @@ class MT5WorkerManager:
         }
         sent, message = self._send_command(
             profile.id,
-            {"action": "set_live_stream", "slot_id": slot_id, "symbol": symbol.to_dict()},
+            worker_command("set_live_stream", slot_id=slot_id, symbol=symbol.to_dict()),
             "Fluxo ao vivo configurado.",
         )
         return sent, message
@@ -295,7 +295,7 @@ class MT5WorkerManager:
         terminal_id = str(slot.get("terminal_id", ""))
         self._send_command(
             terminal_id,
-            {"action": "clear_live_stream", "slot_id": slot_id},
+            worker_command("clear_live_stream", slot_id=slot_id),
             "",
         )
         return True, "Fluxo ao vivo encerrado."
@@ -310,7 +310,11 @@ class MT5WorkerManager:
                 continue
             self._send_command(
                 terminal_id,
-                {"action": "set_live_stream", "slot_id": slot_id, "symbol": slot.get("symbol", {})},
+                worker_command(
+                    "set_live_stream",
+                    slot_id=slot_id,
+                    symbol=slot.get("symbol", {}),
+                ),
                 "",
             )
 
@@ -351,7 +355,8 @@ class MT5WorkerManager:
             except (OSError, ValueError, EOFError):
                 logger.exception("Fila de eventos dos workers foi encerrada ou ficou indisponível")
                 break
-            if not isinstance(event, dict):
+            if not valid_worker_event(event):
+                logger.warning("Evento de worker inválido ou incompatível foi descartado: %r", event)
                 continue
             if self._apply_event(event):
                 events.append(event)
@@ -451,12 +456,11 @@ class MT5WorkerManager:
                     }
                 )
                 events.append(
-                    {
-                        "terminal_id": terminal_id,
-                        "event": "error",
-                        "timestamp": now_iso(),
-                        "data": state.to_dict(),
-                    }
+                    WorkerEvent(
+                        terminal_id=terminal_id,
+                        event="error",
+                        data=state.to_dict(),
+                    ).to_dict()
                 )
             else:
                 state.alive = False

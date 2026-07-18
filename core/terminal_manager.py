@@ -51,6 +51,31 @@ class TerminalManager:
             ),
         }
 
+    def instance_status(self, profile: TerminalProfile) -> dict:
+        """Descreve a integridade local sem alterar o cadastro ou a pasta."""
+
+        instance_dir = Path(profile.instance_dir).resolve()
+        terminal_exe = instance_dir / "terminal64.exe"
+        if not self._is_inside_instances(instance_dir):
+            state = "invalid_path"
+            message = "A pasta cadastrada não pertence à área controlada do EP Market Hub."
+        elif not instance_dir.is_dir():
+            state = "directory_missing"
+            message = "A pasta local desta instância não foi encontrada."
+        elif not terminal_exe.is_file():
+            state = "executable_missing"
+            message = "A pasta existe, mas o terminal64.exe não foi encontrado."
+        else:
+            state = "ready"
+            message = "Instância local pronta."
+        return {
+            "ready": state == "ready",
+            "state": state,
+            "path": str(instance_dir),
+            "terminal_exe": str(terminal_exe),
+            "message": message,
+        }
+
     def remember(self, profile: TerminalProfile) -> None:
         self._known_profiles[profile.id] = profile
 
@@ -82,6 +107,48 @@ class TerminalManager:
         if not terminal_exe.is_file():
             shutil.rmtree(instance_dir, ignore_errors=True)
             raise FileNotFoundError(f"Instância criada sem terminal64.exe: {terminal_exe}")
+        return terminal_exe
+
+    def repair_instance_from_base(self, profile: TerminalProfile) -> Path:
+        """Recria apenas o executável ausente, preservando uma pasta ainda existente."""
+
+        status = self.base_status()
+        if not status["ok"]:
+            missing = ", ".join(status["missing"])
+            raise FileNotFoundError(
+                f"Instalação-base incompleta em {self.base_mt5_dir}. Itens ausentes: {missing}"
+            )
+
+        instance_dir = Path(profile.instance_dir).resolve()
+        if not self._is_inside_instances(instance_dir):
+            raise ValueError("A instância não está dentro da pasta controlada do EP Market Hub.")
+        if self.is_running(profile.id, profile):
+            raise RuntimeError("Feche o MT5 antes de recriar a instância local.")
+
+        terminal_exe = instance_dir / "terminal64.exe"
+        if terminal_exe.is_file():
+            return terminal_exe
+        if instance_dir.exists() and not instance_dir.is_dir():
+            raise NotADirectoryError(f"O caminho da instância não é uma pasta: {instance_dir}")
+
+        created_dir = not instance_dir.exists()
+        if created_dir:
+            instance_dir.mkdir(parents=True, exist_ok=False)
+
+        temporary = instance_dir / f".terminal64.exe.recreate-{uuid4().hex[:10]}.tmp"
+        try:
+            shutil.copy2(self.base_mt5_dir / "terminal64.exe", temporary)
+            temporary.replace(terminal_exe)
+        except Exception:
+            temporary.unlink(missing_ok=True)
+            if created_dir:
+                shutil.rmtree(instance_dir, ignore_errors=True)
+            raise
+
+        if not terminal_exe.is_file():
+            if created_dir:
+                shutil.rmtree(instance_dir, ignore_errors=True)
+            raise FileNotFoundError(f"Instância recriada sem terminal64.exe: {terminal_exe}")
         return terminal_exe
 
     def rollback_created_instance(self, instance_dir: Path) -> bool:
@@ -317,8 +384,8 @@ class TerminalManager:
 
     def _is_inside_instances(self, path: Path) -> bool:
         try:
-            path.resolve().relative_to(self.instances_dir)
-            return True
+            relative = path.resolve().relative_to(self.instances_dir)
+            return relative != Path(".")
         except ValueError:
             return False
 

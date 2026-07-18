@@ -119,11 +119,15 @@ class FakeTerminalManager:
     def __init__(self) -> None:
         self.open_ids = set()
         self.launched = []
+        self.launch_minimized = []
         self.stopped = []
         self.remembered = []
         self.created = []
         self.renamed = []
         self.rolled_back_renames = []
+        self.instance_states = {}
+        self.repaired = []
+        self.forgotten = []
 
     @staticmethod
     def build_instance_slug(broker_name: str, account_login: str) -> str:
@@ -132,14 +136,30 @@ class FakeTerminalManager:
     def remember(self, profile: TerminalProfile) -> None:
         self.remembered.append(profile.id)
 
+    def instance_status(self, profile: TerminalProfile) -> dict:
+        state = self.instance_states.get(profile.id, "ready")
+        messages = {
+            "ready": "Instância local pronta.",
+            "directory_missing": "A pasta local desta instância não foi encontrada.",
+            "executable_missing": "A pasta existe, mas o terminal64.exe não foi encontrado.",
+        }
+        return {
+            "ready": state == "ready",
+            "state": state,
+            "path": profile.instance_dir,
+            "terminal_exe": profile.terminal_exe,
+            "message": messages.get(state, "Instância local indisponível."),
+        }
+
     def is_running(self, terminal_id: str, profile=None) -> bool:
         return terminal_id in self.open_ids
 
     def running_count(self, profiles) -> int:
         return sum(profile.id in self.open_ids for profile in profiles)
 
-    def launch(self, profile: TerminalProfile) -> None:
+    def launch(self, profile: TerminalProfile, minimized: bool = True) -> None:
         self.launched.append(profile.id)
+        self.launch_minimized.append(minimized)
         self.open_ids.add(profile.id)
 
     def stop(self, terminal_id: str, profile=None) -> bool:
@@ -151,6 +171,14 @@ class FakeTerminalManager:
     def create_instance_from_base(self, slug: str) -> Path:
         self.created.append(slug)
         return Path("sandbox") / slug / "terminal64.exe"
+
+    def repair_instance_from_base(self, profile: TerminalProfile) -> Path:
+        self.repaired.append(profile.id)
+        self.instance_states[profile.id] = "ready"
+        return Path(profile.terminal_exe)
+
+    def forget(self, terminal_id: str) -> None:
+        self.forgotten.append(terminal_id)
 
     def rename_instance(self, profile: TerminalProfile, new_slug: str) -> tuple[Path, Path]:
         self.renamed.append((profile.id, new_slug))
@@ -168,6 +196,8 @@ class FakeWorkerManager:
         self.failed_stop_ids = set()
         self.started = []
         self.stopped = []
+        self.events = []
+        self.forgotten = []
 
     def active_count(self) -> int:
         return len(self.running_ids)
@@ -199,14 +229,22 @@ class FakeWorkerManager:
             alive=terminal_id in self.running_ids,
         )
 
+    def states_payload(self, terminal_ids) -> dict:
+        return {terminal_id: self.state(terminal_id).to_dict() for terminal_id in terminal_ids}
+
     def poll_events(self) -> list:
-        return []
+        events = list(self.events)
+        self.events.clear()
+        return events
 
     def live_streams_payload(self) -> dict:
         return {}
 
     def clear_live_streams_for_terminal(self, terminal_id: str) -> int:
         return 0
+
+    def forget_terminal(self, terminal_id: str) -> None:
+        self.forgotten.append(terminal_id)
 
 
 def make_profile(tmp_path: Path, terminal_id: str) -> TerminalProfile:
@@ -259,6 +297,123 @@ def test_runtime_limit_payload_uses_injected_product_policy(tmp_path: Path) -> N
 
     assert response["ok"] is True
     assert response["data"]["max_active_mt5"] == 4
+
+
+def test_worker_restart_request_reopens_terminal_minimized_once(tmp_path: Path) -> None:
+    bridge, terminal_manager, worker_manager = build_bridge(tmp_path, ["one"])
+    worker_manager.running_ids.add("one")
+    restart_event = {
+        "terminal_id": "one",
+        "event": "terminal_restart_required",
+        "data": {
+            "state": "reopening_terminal",
+            "alive": True,
+            "connected": False,
+        },
+    }
+    worker_manager.events.append(restart_event)
+
+    bridge.poll_worker_events()
+
+    assert terminal_manager.launched == ["one"]
+    assert terminal_manager.launch_minimized == [True]
+    assert terminal_manager.open_ids == {"one"}
+
+    worker_manager.events.append(restart_event)
+    bridge.poll_worker_events()
+
+    assert terminal_manager.launched == ["one"]
+
+
+def test_worker_restart_stops_when_instance_disappeared(tmp_path: Path) -> None:
+    bridge, terminal_manager, worker_manager = build_bridge(tmp_path, ["one"])
+    terminal_manager.instance_states["one"] = "directory_missing"
+    worker_manager.running_ids.add("one")
+    worker_manager.events.append(
+        {
+            "terminal_id": "one",
+            "event": "terminal_restart_required",
+            "data": {
+                "state": "reopening_terminal",
+                "alive": True,
+                "connected": False,
+            },
+        }
+    )
+
+    bridge.poll_worker_events()
+
+    assert terminal_manager.launched == []
+    assert worker_manager.running_ids == set()
+    assert worker_manager.stopped == ["one"]
+
+
+def test_terminal_getter_dispatches_restart_event_instead_of_discarding_it(
+    tmp_path: Path,
+) -> None:
+    bridge, terminal_manager, worker_manager = build_bridge(tmp_path, ["one"])
+    worker_manager.running_ids.add("one")
+    worker_manager.events.append(
+        {
+            "terminal_id": "one",
+            "event": "terminal_restart_required",
+            "data": {"state": "reopening_terminal", "alive": True, "connected": False},
+        }
+    )
+
+    response = json.loads(bridge.getTerminals())
+
+    assert response["ok"] is True
+    assert terminal_manager.launched == ["one"]
+    assert terminal_manager.launch_minimized == [True]
+
+
+def test_missing_instance_is_exposed_and_cannot_be_opened_or_deleted_normally(
+    tmp_path: Path,
+) -> None:
+    bridge, terminal_manager, _ = build_bridge(tmp_path, ["one"])
+    terminal_manager.instance_states["one"] = "directory_missing"
+
+    payload = bridge._terminals_payload()[0]
+    launch_response = json.loads(bridge.launchTerminal("one"))
+    delete_response = json.loads(bridge.deleteTerminal("one", "EXCLUIR"))
+
+    assert payload["instance_status"]["state"] == "directory_missing"
+    assert launch_response["ok"] is False
+    assert launch_response["data"]["reason"] == "instance_unavailable"
+    assert delete_response["ok"] is False
+    assert bridge.terminal_registry.get("one") is not None
+
+
+def test_missing_instance_can_be_recreated_without_changing_registry_identity(
+    tmp_path: Path,
+) -> None:
+    bridge, terminal_manager, _ = build_bridge(tmp_path, ["one"])
+    terminal_manager.instance_states["one"] = "directory_missing"
+    original = bridge.terminal_registry.get("one")
+
+    response = json.loads(bridge.recreateTerminalInstance("one"))
+    restored = bridge.terminal_registry.get("one")
+
+    assert response["ok"] is True
+    assert terminal_manager.repaired == ["one"]
+    assert restored.broker_name == original.broker_name
+    assert restored.account_login == original.account_login
+    assert response["data"]["instance_status"]["state"] == "ready"
+
+
+def test_missing_instance_registration_can_be_removed_without_touching_folder(
+    tmp_path: Path,
+) -> None:
+    bridge, terminal_manager, worker_manager = build_bridge(tmp_path, ["one"])
+    terminal_manager.instance_states["one"] = "executable_missing"
+
+    response = json.loads(bridge.removeMissingTerminal("one"))
+
+    assert response["ok"] is True
+    assert bridge.terminal_registry.get("one") is None
+    assert terminal_manager.forgotten == ["one"]
+    assert worker_manager.forgotten == ["one"]
 
 
 def test_launch_does_not_open_mt5_when_worker_capacity_is_full(tmp_path: Path) -> None:

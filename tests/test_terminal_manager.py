@@ -33,6 +33,111 @@ def test_create_instance_copies_only_terminal64(tmp_path: Path) -> None:
     assert [path.name for path in terminal_exe.parent.iterdir()] == ["terminal64.exe"]
 
 
+def test_instance_status_distinguishes_missing_directory_and_executable(tmp_path: Path) -> None:
+    manager = build_manager(tmp_path)
+    instance_dir = manager.instances_dir / "BROKER-FAKE"
+    profile = TerminalProfile(
+        id="fake",
+        label="Fake",
+        instance_dir=str(instance_dir),
+        terminal_exe=str(instance_dir / "terminal64.exe"),
+    )
+
+    assert manager.instance_status(profile)["state"] == "directory_missing"
+
+    instance_dir.mkdir()
+
+    assert manager.instance_status(profile)["state"] == "executable_missing"
+
+    (instance_dir / "terminal64.exe").write_bytes(b"fake")
+
+    assert manager.instance_status(profile)["state"] == "ready"
+
+
+def test_instances_root_cannot_be_treated_as_a_terminal_instance(tmp_path: Path) -> None:
+    manager = build_manager(tmp_path)
+    profile = TerminalProfile(
+        id="invalid",
+        label="Invalid",
+        instance_dir=str(manager.instances_dir),
+        terminal_exe=str(manager.instances_dir / "terminal64.exe"),
+    )
+
+    assert manager.instance_status(profile)["state"] == "invalid_path"
+
+
+def test_repair_instance_recreates_missing_directory_from_base(tmp_path: Path) -> None:
+    manager = build_manager(tmp_path)
+    instance_dir = manager.instances_dir / "BROKER-FAKE"
+    profile = TerminalProfile(
+        id="fake",
+        label="Fake",
+        instance_dir=str(instance_dir),
+        terminal_exe=str(instance_dir / "terminal64.exe"),
+    )
+
+    terminal_exe = manager.repair_instance_from_base(profile)
+
+    assert terminal_exe.read_bytes() == b"fake-terminal-for-tests"
+    assert manager.instance_status(profile)["state"] == "ready"
+
+
+def test_repair_instance_preserves_existing_directory_contents(tmp_path: Path) -> None:
+    manager = build_manager(tmp_path)
+    instance_dir = manager.instances_dir / "BROKER-FAKE"
+    instance_dir.mkdir()
+    marker = instance_dir / "config-preservada.dat"
+    marker.write_bytes(b"preservar")
+    profile = TerminalProfile(
+        id="fake",
+        label="Fake",
+        instance_dir=str(instance_dir),
+        terminal_exe=str(instance_dir / "terminal64.exe"),
+    )
+
+    manager.repair_instance_from_base(profile)
+
+    assert marker.read_bytes() == b"preservar"
+    assert (instance_dir / "terminal64.exe").is_file()
+
+
+def test_launch_requests_minimized_window_on_windows(tmp_path: Path, monkeypatch) -> None:
+    manager = build_manager(tmp_path)
+    terminal_exe = manager.create_instance_from_base("BROKER-FAKE")
+    profile = TerminalProfile(
+        id="fake",
+        label="Fake",
+        instance_dir=str(terminal_exe.parent),
+        terminal_exe=str(terminal_exe),
+    )
+    captured = {}
+
+    class StartupInfo:
+        dwFlags = 0
+        wShowWindow = 0
+
+    class Process:
+        def poll(self):
+            return None
+
+    def popen(args, **kwargs):
+        captured["args"] = args
+        captured.update(kwargs)
+        return Process()
+
+    monkeypatch.setattr("core.terminal_manager.sys.platform", "win32")
+    monkeypatch.setattr("core.terminal_manager.subprocess.STARTUPINFO", StartupInfo, raising=False)
+    monkeypatch.setattr("core.terminal_manager.subprocess.STARTF_USESHOWWINDOW", 1, raising=False)
+    monkeypatch.setattr("core.terminal_manager.subprocess.Popen", popen)
+    monkeypatch.setattr(manager, "_find_processes", lambda profile: [])
+
+    manager.launch(profile, minimized=True)
+
+    assert captured["args"] == [str(terminal_exe), "/portable"]
+    assert captured["startupinfo"].dwFlags == 1
+    assert captured["startupinfo"].wShowWindow == 6
+
+
 class KillRequiredProcess:
     pid = 4242
 

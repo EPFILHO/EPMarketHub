@@ -6,12 +6,15 @@ import queue
 import time
 import traceback
 from multiprocessing.synchronize import Event as EventType
+from pathlib import Path
 from typing import Any
+
+import psutil
 
 from .market_snapshot import build_snapshot_from_connector, resolve_symbol_aliases
 from .models import SymbolDefinition, TerminalProfile
 from .mt5_connector import MT5Connector
-from .worker_protocol import WorkerEvent, now_iso
+from .worker_protocol import WorkerEvent, now_iso, valid_worker_command
 
 logger = logging.getLogger(__name__)
 
@@ -46,6 +49,45 @@ def _emit(
 
 def _status_payload(status) -> dict[str, Any]:
     return status.to_dict()
+
+
+def _normalized_executable(value: str | Path) -> str:
+    try:
+        return str(Path(value).resolve()).casefold()
+    except Exception:
+        return str(value).casefold()
+
+
+def _terminal_process_running(terminal_exe: str) -> bool:
+    target = _normalized_executable(terminal_exe)
+    for process in psutil.process_iter(["exe"]):
+        try:
+            executable = process.info.get("exe")
+            if executable and _normalized_executable(executable) == target:
+                return True
+        except (psutil.NoSuchProcess, psutil.AccessDenied, OSError):
+            continue
+    return False
+
+
+def _emit_terminal_restart_required(
+    event_queue,
+    profile: TerminalProfile,
+    reconnect_attempts: int,
+) -> None:
+    _emit(
+        event_queue,
+        profile.id,
+        "terminal_restart_required",
+        {
+            "state": "reopening_terminal",
+            "alive": True,
+            "connected": False,
+            "message": "Reabrindo MT5 de forma controlada e minimizada.",
+            "pid": os.getpid(),
+            "reconnect_attempts": reconnect_attempts,
+        },
+    )
 
 
 def _emit_live_status(
@@ -140,7 +182,10 @@ def mt5_worker_main(
                 except queue.Empty:
                     break
 
-                action = command.get("action") if isinstance(command, dict) else None
+                if not valid_worker_command(command):
+                    logger.warning("Comando inválido ou incompatível descartado: %r", command)
+                    continue
+                action = command["action"]
                 if action == "stop":
                     stop_event.set()
                     break
@@ -210,50 +255,57 @@ def mt5_worker_main(
                 break
 
             if not connector.initialized and now >= next_connect:
-                status = connector.initialize()
-                connection_meta = _status_payload(status)
-                if status.ok:
-                    reconnect_attempts = 0
-                    last_state = "connected"
-                    last_message = status.message
-                    next_snapshot = 0.0
-                    next_live_poll = 0.0
-                    available_symbol_states.clear()
-                    for stream in live_streams.values():
-                        stream["resolved_symbol"] = None
-                    _emit(
-                        event_queue,
-                        profile.id,
-                        "status",
-                        {
-                            **connection_meta,
-                            "state": "connected",
-                            "alive": True,
-                            "connected": True,
-                            "pid": os.getpid(),
-                            "reconnect_attempts": reconnect_attempts,
-                        },
-                    )
-                else:
+                if not _terminal_process_running(profile.terminal_exe):
                     reconnect_attempts += 1
-                    connector.shutdown()
+                    last_state = "reopening_terminal"
+                    last_message = "MT5 fechado; aguardando reabertura controlada."
+                    _emit_terminal_restart_required(event_queue, profile, reconnect_attempts)
                     next_connect = now + reconnect_seconds
-                    waiting_login = "sem conta logada" in status.message.lower()
-                    last_state = "waiting_login" if waiting_login else "reconnecting"
-                    last_message = status.message
-                    _emit(
-                        event_queue,
-                        profile.id,
-                        "status",
-                        {
-                            **connection_meta,
-                            "state": last_state,
-                            "alive": True,
-                            "connected": False,
-                            "pid": os.getpid(),
-                            "reconnect_attempts": reconnect_attempts,
-                        },
-                    )
+                else:
+                    status = connector.initialize()
+                    connection_meta = _status_payload(status)
+                    if status.ok:
+                        reconnect_attempts = 0
+                        last_state = "connected"
+                        last_message = status.message
+                        next_snapshot = 0.0
+                        next_live_poll = 0.0
+                        available_symbol_states.clear()
+                        for stream in live_streams.values():
+                            stream["resolved_symbol"] = None
+                        _emit(
+                            event_queue,
+                            profile.id,
+                            "status",
+                            {
+                                **connection_meta,
+                                "state": "connected",
+                                "alive": True,
+                                "connected": True,
+                                "pid": os.getpid(),
+                                "reconnect_attempts": reconnect_attempts,
+                            },
+                        )
+                    else:
+                        reconnect_attempts += 1
+                        connector.shutdown()
+                        next_connect = now + reconnect_seconds
+                        waiting_login = "sem conta logada" in status.message.lower()
+                        last_state = "waiting_login" if waiting_login else "reconnecting"
+                        last_message = status.message
+                        _emit(
+                            event_queue,
+                            profile.id,
+                            "status",
+                            {
+                                **connection_meta,
+                                "state": last_state,
+                                "alive": True,
+                                "connected": False,
+                                "pid": os.getpid(),
+                                "reconnect_attempts": reconnect_attempts,
+                            },
+                        )
 
             if connector.initialized:
                 current_status = connector.connection_status()
@@ -267,19 +319,24 @@ def mt5_worker_main(
                     for stream in live_streams.values():
                         stream["resolved_symbol"] = None
                     next_connect = now + reconnect_seconds
-                    _emit(
-                        event_queue,
-                        profile.id,
-                        "status",
-                        {
-                            **connection_meta,
-                            "state": "reconnecting",
-                            "alive": True,
-                            "connected": False,
-                            "pid": os.getpid(),
-                            "reconnect_attempts": reconnect_attempts,
-                        },
-                    )
+                    if _terminal_process_running(profile.terminal_exe):
+                        _emit(
+                            event_queue,
+                            profile.id,
+                            "status",
+                            {
+                                **connection_meta,
+                                "state": "reconnecting",
+                                "alive": True,
+                                "connected": False,
+                                "pid": os.getpid(),
+                                "reconnect_attempts": reconnect_attempts,
+                            },
+                        )
+                    else:
+                        last_state = "reopening_terminal"
+                        last_message = "MT5 fechado; aguardando reabertura controlada."
+                        _emit_terminal_restart_required(event_queue, profile, reconnect_attempts)
                 else:
                     if force_snapshot or now >= next_snapshot:
                         snapshot = build_snapshot_from_connector(profile, connector, symbols)
@@ -409,7 +466,7 @@ def mt5_worker_main(
                 "state": "stopped",
                 "alive": False,
                 "connected": False,
-                "message": "Leitura encerrada.",
+                "message": "Desconectado.",
                 "pid": os.getpid(),
             },
         )
