@@ -17,6 +17,11 @@ Use estas instruções ao trabalhar neste repositório.
 - O login é feito manualmente pelo usuário dentro do MT5.
 - Senhas e sessões reais não devem ser versionadas.
 
+`D:\EP\EPMarketHub` é uma instalação de teste, não um clone de trabalho. Não
+execute checkout, pull, merge ou troca de branch nela. Para atualizar seus
+arquivos de código, use somente `scripts/sync_test_copy.ps1`; o script deve
+preservar `.git`, `MT5` e todo o conteúdo de `user_data`.
+
 ## Antes de alterar código
 
 1. Leia `README.md`, `docs/ARCHITECTURE.md`, `docs/CURRENT_STATUS.md` e `docs/CODEX_TASKS.md`.
