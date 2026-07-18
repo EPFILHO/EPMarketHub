@@ -17,6 +17,12 @@ from core.models import TerminalProfile
 from core.symbol_registry import SymbolRegistry
 from core.terminal_manager import TerminalManager
 from core.terminal_registry import TerminalRegistry
+from core.terminal_states import (
+    InstanceIntegrityState,
+    ProcessState,
+    TerminalProcessStateMachine,
+    WorkerConnectionState,
+)
 from core.worker_manager import MT5WorkerManager
 from core.worker_protocol import (
     WORKER_IMMEDIATE_STATE_EVENT_TYPES,
@@ -55,6 +61,7 @@ class MarketHubBridge(QObject):
         self.symbol_registry = symbol_registry
         self.terminal_manager = terminal_manager
         self.worker_manager = worker_manager
+        self.process_states = TerminalProcessStateMachine()
 
         self._last_worker_state_emit = 0.0
         self._normalize_registered_instance_names()
@@ -115,12 +122,22 @@ class MarketHubBridge(QObject):
             f"{status['message']} Clique no botão Resolver para ver as opções."
         )
 
+    def _duplicate_process_error(self, profile: TerminalProfile) -> str | None:
+        process_count = self.terminal_manager.process_count(profile)
+        if process_count <= 1:
+            return None
+        return (
+            f"Foram encontrados {process_count} processos para esta instância. "
+            "Feche o MT5 antes de reiniciar a leitura."
+        )
+
     def _remove_registration_only(self, profile: TerminalProfile, instance_status: dict) -> str:
         self.worker_manager.clear_live_streams_for_terminal(profile.id)
         if not self.terminal_registry.remove(profile.id):
             return fail("Não foi possível remover o cadastro do terminal.")
         self.worker_manager.forget_terminal(profile.id)
         self.terminal_manager.forget(profile.id)
+        self.process_states.forget(profile.id)
         self._emit_terminals()
         self._emit_live_streams()
         return ok(
@@ -164,7 +181,14 @@ class MarketHubBridge(QObject):
         for terminal in terminals:
             item = terminal.to_dict()
             item["instance_status"] = self.terminal_manager.instance_status(terminal)
-            item["running"] = self.terminal_manager.is_running(terminal.id, terminal)
+            process_count = self.terminal_manager.process_count(terminal)
+            item["running"] = process_count > 0
+            item["process_count"] = process_count
+            item["process_state"] = self.process_states.resolve(
+                terminal.id,
+                running=item["running"],
+                process_count=process_count,
+            )
             item["worker"] = self.worker_manager.state(terminal.id).to_dict()
             rows.append(item)
         return rows
@@ -189,19 +213,26 @@ class MarketHubBridge(QObject):
         for event in events:
             event_type = event.get("event")
             data = event.get("data") if isinstance(event.get("data"), dict) else {}
+            terminal_id = str(event.get("terminal_id", ""))
+            worker_state = str(data.get("state", ""))
+            if event_type == "snapshot":
+                self.process_states.complete_startup(terminal_id)
+                should_emit_terminals = True
+            elif event_type in {"status", "heartbeat", "error", "stopped"}:
+                if worker_state == WorkerConnectionState.REOPENING_TERMINAL.value:
+                    self.process_states.set(terminal_id, ProcessState.REOPENING)
+                elif worker_state != WorkerConnectionState.STARTING.value:
+                    self.process_states.complete_startup(terminal_id)
+                if event_type in {"status", "error", "stopped"}:
+                    should_emit_terminals = True
             if event_type == "snapshot" and isinstance(data.get("snapshot"), dict):
                 self.snapshotChanged.emit(json.dumps(data["snapshot"], ensure_ascii=False))
             elif event_type == "live_tick" and isinstance(data.get("tick"), dict):
                 self.liveTickChanged.emit(json.dumps(data["tick"], ensure_ascii=False))
             elif event_type == "live_status":
                 should_emit_live = True
-            elif event_type == "status" and data.get("state") in {
-                "reconnecting",
-                "reopening_terminal",
-            }:
-                should_emit_terminals = True
             elif event_type == "terminal_restart_required":
-                terminal_id = str(event.get("terminal_id", ""))
+                self.process_states.set(terminal_id, ProcessState.REOPENING)
                 profile = self.terminal_registry.get(terminal_id)
                 if (
                     profile
@@ -211,6 +242,7 @@ class MarketHubBridge(QObject):
                     instance_status = self.terminal_manager.instance_status(profile)
                     if not instance_status["ready"]:
                         self.worker_manager.stop_worker(terminal_id)
+                        self.process_states.clear(terminal_id)
                         should_emit_terminals = True
                         should_emit_live = True
                         logger.error(
@@ -227,6 +259,7 @@ class MarketHubBridge(QObject):
                                 terminal_id,
                             )
                         except Exception:
+                            self.process_states.set(terminal_id, ProcessState.LAUNCH_FAILED)
                             logger.exception(
                                 "Falha ao reabrir minimizado o MT5 %s solicitado pelo worker",
                                 terminal_id,
@@ -317,7 +350,7 @@ class MarketHubBridge(QObject):
 
             instance_slug = self.terminal_manager.build_instance_slug(broker_name, account_login)
             candidate_status = self.terminal_manager.instance_status_for_slug(instance_slug)
-            if candidate_status["state"] != "directory_missing":
+            if candidate_status["state"] != InstanceIntegrityState.DIRECTORY_MISSING.value:
                 return self._orphan_instance_failure(
                     label,
                     broker_name,
@@ -329,7 +362,10 @@ class MarketHubBridge(QObject):
                 terminal_exe = self.terminal_manager.create_instance_from_base(instance_slug)
             except FileExistsError:
                 candidate_status = self.terminal_manager.instance_status_for_slug(instance_slug)
-                if candidate_status["state"] != "directory_missing":
+                if (
+                    candidate_status["state"]
+                    != InstanceIntegrityState.DIRECTORY_MISSING.value
+                ):
                     return self._orphan_instance_failure(
                         label,
                         broker_name,
@@ -383,9 +419,9 @@ class MarketHubBridge(QObject):
 
         instance_slug = self.terminal_manager.build_instance_slug(broker_name, account_login)
         instance_status = self.terminal_manager.instance_status_for_slug(instance_slug)
-        if instance_status["state"] == "directory_missing":
+        if instance_status["state"] == InstanceIntegrityState.DIRECTORY_MISSING.value:
             return fail("A pasta local não existe mais. Tente criar a instância novamente.")
-        if instance_status["state"] == "invalid_path":
+        if instance_status["state"] == InstanceIntegrityState.INVALID_PATH.value:
             return fail(instance_status["message"])
 
         target_dir = Path(instance_status["path"]).resolve()
@@ -409,7 +445,9 @@ class MarketHubBridge(QObject):
             portable=True,
         )
         try:
-            repaired = instance_status["state"] == "executable_missing"
+            repaired = (
+                instance_status["state"] == InstanceIntegrityState.EXECUTABLE_MISSING.value
+            )
             if repaired:
                 terminal_exe = self.terminal_manager.repair_instance_from_base(profile)
                 profile.instance_dir = str(terminal_exe.parent)
@@ -504,6 +542,8 @@ class MarketHubBridge(QObject):
     def _start_reading_for_profile(self, profile: TerminalProfile) -> tuple[bool, str]:
         """Inicia o worker de um terminal já aberto, sem alternar conexões."""
 
+        if not profile.enabled:
+            return False, "Este terminal está desativado."
         started, message = self.worker_manager.start_worker(
             profile,
             self.symbol_registry.list(enabled_only=True),
@@ -520,6 +560,8 @@ class MarketHubBridge(QObject):
             profile = self.terminal_registry.get(terminal_id)
             if not profile:
                 return fail("Terminal não encontrado.")
+            if not profile.enabled:
+                return fail("Este terminal está desativado.")
 
             instance_status, instance_error = self._instance_unavailable(profile)
             if instance_error:
@@ -527,6 +569,9 @@ class MarketHubBridge(QObject):
                     instance_error,
                     {"reason": "instance_unavailable", "instance_status": instance_status},
                 )
+            duplicate_error = self._duplicate_process_error(profile)
+            if duplicate_error:
+                return fail(duplicate_error)
 
             terminal_was_open = self.terminal_manager.is_running(profile.id, profile)
             if not terminal_was_open and (
@@ -535,8 +580,17 @@ class MarketHubBridge(QObject):
             ):
                 return fail(self._activation_limit_message())
 
-            self.terminal_manager.launch(profile)
+            if not terminal_was_open:
+                self.process_states.set(profile.id, ProcessState.OPENING)
+            try:
+                self.terminal_manager.launch(profile)
+            except Exception:
+                self.process_states.set(profile.id, ProcessState.LAUNCH_FAILED)
+                self._emit_terminals()
+                raise
             reading_ok, reading_message = self._start_reading_for_profile(profile)
+            if not reading_ok:
+                self.process_states.clear(profile.id)
             self._emit_terminals()
 
             if not reading_ok:
@@ -558,19 +612,42 @@ class MarketHubBridge(QObject):
     @Slot(str, result=str)
     def stopTerminal(self, terminal_id: str) -> str:
         try:
+            profile = self.terminal_registry.get(terminal_id)
+            if not profile:
+                return fail("Terminal não encontrado.")
+            self.process_states.set(terminal_id, ProcessState.CLOSING)
             _, worker_message = self.worker_manager.stop_worker(terminal_id)
             worker_still_running = self.worker_manager.is_running(terminal_id)
-            stopped = self.terminal_manager.stop(terminal_id)
+            stopped = (
+                False
+                if worker_still_running
+                else self.terminal_manager.stop(terminal_id, profile=profile)
+            )
+            terminal_still_running = self.terminal_manager.is_running(terminal_id, profile)
+            if worker_still_running or terminal_still_running:
+                self.process_states.set(terminal_id, ProcessState.CLOSE_FAILED)
+            else:
+                self.process_states.clear(terminal_id)
             self._emit_terminals()
             self._emit_live_streams()
-            if worker_still_running:
+            if worker_still_running or terminal_still_running:
                 return fail(
-                    f"O comando de fechamento do MT5 foi executado, mas o worker continua vivo: "
-                    f"{worker_message}",
-                    {"mt5_stopped": stopped, "worker_running": True},
+                    "Não foi possível confirmar o encerramento completo. "
+                    f"Worker: {worker_message}",
+                    {
+                        "mt5_stopped": stopped,
+                        "mt5_running": terminal_still_running,
+                        "worker_running": worker_still_running,
+                    },
                 )
             return ok({"stopped": stopped}, "Leitura encerrada e comando para fechar o MT5 executado.")
         except Exception as exc:
+            profile = self.terminal_registry.get(terminal_id)
+            if profile and self.terminal_manager.is_running(terminal_id, profile):
+                self.process_states.set(terminal_id, ProcessState.CLOSE_FAILED)
+            else:
+                self.process_states.clear(terminal_id)
+            self._emit_terminals()
             logger.exception("Erro ao parar terminal")
             return fail(str(exc))
 
@@ -587,7 +664,10 @@ class MarketHubBridge(QObject):
             return fail("Feche o MT5 e pare a leitura antes de excluir a instância local.")
 
         instance_status = self.terminal_manager.instance_status(profile)
-        if instance_status["state"] in {"directory_missing", "invalid_path"}:
+        if instance_status["state"] in {
+            InstanceIntegrityState.DIRECTORY_MISSING.value,
+            InstanceIntegrityState.INVALID_PATH.value,
+        }:
             try:
                 return self._remove_registration_only(profile, instance_status)
             except Exception as exc:
@@ -608,6 +688,7 @@ class MarketHubBridge(QObject):
 
             self.worker_manager.forget_terminal(terminal_id)
             self.terminal_manager.forget(terminal_id)
+            self.process_states.forget(terminal_id)
             try:
                 self.terminal_manager.finalize_staged_delete(staged_dir)
             except Exception:
@@ -691,6 +772,8 @@ class MarketHubBridge(QObject):
             profile = self.terminal_registry.get(terminal_id)
             if not profile:
                 return fail("Terminal não encontrado.")
+            if not profile.enabled:
+                return fail("Este terminal está desativado.")
             instance_status, instance_error = self._instance_unavailable(profile)
             if instance_error:
                 return fail(
@@ -700,6 +783,11 @@ class MarketHubBridge(QObject):
             if not self.terminal_manager.is_running(profile.id, profile):
                 return fail("Abra o MT5 antes de iniciar a leitura.")
 
+            duplicate_error = self._duplicate_process_error(profile)
+            if duplicate_error:
+                return fail(duplicate_error)
+
+            self.process_states.clear(profile.id)
             started, message = self.worker_manager.start_worker(
                 profile,
                 self.symbol_registry.list(enabled_only=True),
@@ -725,6 +813,7 @@ class MarketHubBridge(QObject):
     def stopWorker(self, terminal_id: str) -> str:
         try:
             stopped, message = self.worker_manager.stop_worker(terminal_id)
+            self.process_states.complete_startup(terminal_id)
             self._emit_terminals()
             self._emit_live_streams()
             state = self.worker_manager.state(terminal_id).to_dict()
@@ -781,6 +870,10 @@ class MarketHubBridge(QObject):
                 if instance_error:
                     result[terminal_id] = instance_error
                     continue
+                duplicate_error = self._duplicate_process_error(profile)
+                if duplicate_error:
+                    result[terminal_id] = duplicate_error
+                    continue
                 if self.worker_manager.is_running(profile.id):
                     result[terminal_id] = "A leitura deste terminal já está ativa."
                     continue
@@ -795,13 +888,20 @@ class MarketHubBridge(QObject):
 
                 try:
                     if not terminal_is_open:
+                        self.process_states.set(profile.id, ProcessState.OPENING)
                         self.terminal_manager.launch(profile)
                         predicted_open += 1
                     started, message = self.worker_manager.start_worker(profile, symbol_list)
                     result[terminal_id] = message
                     if started:
                         predicted_workers += 1
+                    elif not terminal_is_open:
+                        self.process_states.clear(profile.id)
                 except Exception as exc:
+                    if self.terminal_manager.is_running(profile.id, profile):
+                        self.process_states.clear(profile.id)
+                    else:
+                        self.process_states.set(profile.id, ProcessState.LAUNCH_FAILED)
                     logger.exception("Erro ao abrir o terminal selecionado %s", terminal_id)
                     result[terminal_id] = f"Falha ao abrir/iniciar: {exc}"
 
@@ -832,15 +932,26 @@ class MarketHubBridge(QObject):
                     result[terminal_id] = "Terminal não encontrado."
                     failures += 1
                     continue
+                self.process_states.set(terminal_id, ProcessState.CLOSING)
                 self.worker_manager.clear_live_streams_for_terminal(terminal_id)
                 _, worker_message = self.worker_manager.stop_worker(terminal_id)
                 worker_still_running = self.worker_manager.is_running(terminal_id)
-                stopped = self.terminal_manager.stop(profile.id, profile=profile)
-                if worker_still_running:
+                stopped = (
+                    False
+                    if worker_still_running
+                    else self.terminal_manager.stop(profile.id, profile=profile)
+                )
+                terminal_still_running = self.terminal_manager.is_running(profile.id, profile)
+                if worker_still_running or terminal_still_running:
+                    self.process_states.set(terminal_id, ProcessState.CLOSE_FAILED)
+                else:
+                    self.process_states.clear(terminal_id)
+                if worker_still_running or terminal_still_running:
                     failures += 1
                     result[terminal_id] = (
-                        f"MT5 {'fechado' if stopped else 'já estava fechado'}, "
-                        f"mas o worker continua vivo: {worker_message}"
+                        f"MT5 {'ainda aberto' if terminal_still_running else 'fechado'}, "
+                        f"worker {'ainda vivo' if worker_still_running else 'encerrado'}: "
+                        f"{worker_message}"
                     )
                 else:
                     result[terminal_id] = "MT5 fechado." if stopped else "O MT5 já estava fechado."
@@ -868,6 +979,7 @@ class MarketHubBridge(QObject):
             failures: dict[str, str] = {}
             for terminal in self.terminal_registry.list():
                 _, message = self.worker_manager.stop_worker(terminal.id)
+                self.process_states.complete_startup(terminal.id)
                 if self.worker_manager.is_running(terminal.id):
                     failures[terminal.id] = message
             self._emit_terminals()
@@ -919,12 +1031,17 @@ class MarketHubBridge(QObject):
             profile = self.terminal_registry.get(terminal_id)
             if not profile:
                 return fail("Terminal do fluxo não encontrado.")
+            if not profile.enabled:
+                return fail("Este terminal está desativado.")
             instance_status, instance_error = self._instance_unavailable(profile)
             if instance_error:
                 return fail(
                     instance_error,
                     {"reason": "instance_unavailable", "instance_status": instance_status},
                 )
+            duplicate_error = self._duplicate_process_error(profile)
+            if duplicate_error:
+                return fail(duplicate_error)
             symbol = self.symbol_registry.get(symbol_id)
             if not symbol or not symbol.enabled:
                 return fail("Ativo do fluxo não encontrado ou inativo.")
@@ -934,12 +1051,19 @@ class MarketHubBridge(QObject):
                 if not terminal_is_open:
                     if self._running_mt5_count() >= self.max_active_mt5:
                         return fail(self._activation_limit_message())
-                    self.terminal_manager.launch(profile, minimized=True)
+                    self.process_states.set(profile.id, ProcessState.OPENING)
+                    try:
+                        self.terminal_manager.launch(profile, minimized=True)
+                    except Exception:
+                        self.process_states.set(profile.id, ProcessState.LAUNCH_FAILED)
+                        self._emit_terminals()
+                        raise
                 started, start_message = self.worker_manager.start_worker(
                     profile,
                     self.symbol_registry.list(enabled_only=True),
                 )
                 if not started and not self.worker_manager.is_running(terminal_id):
+                    self.process_states.clear(profile.id)
                     return fail(start_message)
             sent, message = self.worker_manager.configure_live_stream(slot_id, profile, symbol)
             self._emit_terminals()

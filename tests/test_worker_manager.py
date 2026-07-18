@@ -214,7 +214,7 @@ def test_start_failure_releases_command_queue_and_records_error(monkeypatch) -> 
     assert started is False
     assert "falha simulada" in message
     assert manager.is_running("failing") is False
-    assert manager.state("failing").state == "error"
+    assert manager.state("failing").state == "worker_start_failed"
     assert context.queues[-1].closed is True
 
 
@@ -313,7 +313,7 @@ def test_resistant_worker_is_not_reported_as_stopped(monkeypatch) -> None:
     assert stopped is False
     assert "confirmar" in message
     assert manager.is_running("resistant") is True
-    assert manager.state("resistant").state == "error"
+    assert manager.state("resistant").state == "stop_failed"
     assert manager.state("resistant").alive is True
 
 
@@ -378,6 +378,47 @@ def test_current_worker_event_is_applied_and_forwarded(manager: MT5WorkerManager
     assert manager.state("current").connected is True
 
 
+def test_alive_worker_without_activity_becomes_unresponsive(
+    manager: MT5WorkerManager,
+) -> None:
+    manager.start_worker(profile("silent"), [])
+    manager._last_activity["silent"] -= manager.unresponsive_seconds + 1
+
+    events = manager.poll_events()
+
+    assert len(events) == 1
+    assert events[0]["event"] == "status"
+    assert events[0]["data"]["state"] == "unresponsive"
+    assert manager.state("silent").alive is True
+    assert manager.state("silent").connected is False
+
+
+def test_new_worker_event_recovers_unresponsive_state(manager: MT5WorkerManager) -> None:
+    manager.start_worker(profile("silent"), [])
+    current_pid = manager.state("silent").pid
+    manager._last_activity["silent"] -= manager.unresponsive_seconds + 1
+    manager.poll_events()
+    manager.event_queue.items.append(
+        {
+            "protocol_version": WORKER_PROTOCOL_VERSION,
+            "terminal_id": "silent",
+            "event": "heartbeat",
+            "data": {
+                "pid": current_pid,
+                "state": "connected",
+                "alive": True,
+                "connected": True,
+            },
+        }
+    )
+
+    events = manager.poll_events()
+
+    assert len(events) == 1
+    assert manager.state("silent").state == "connected"
+    assert manager.state("silent").connected is True
+
+
 def test_unexpected_process_death_synthesizes_error_and_cleans_handle(
     manager: MT5WorkerManager,
 ) -> None:
@@ -391,7 +432,7 @@ def test_unexpected_process_death_synthesizes_error_and_cleans_handle(
     assert len(events) == 1
     assert events[0]["event"] == "error"
     assert "código 7" in events[0]["data"]["message"]
-    assert manager.state("dead").state == "error"
+    assert manager.state("dead").state == "worker_crashed"
     assert manager.state("dead").alive is False
     assert "dead" not in manager._handles
 
@@ -407,7 +448,7 @@ def test_dead_process_clears_alive_flag_after_worker_error_event(
             "event": "error",
             "data": {
                 "pid": process.pid,
-                "state": "error",
+                "state": "worker_crashed",
                 "alive": False,
                 "connected": False,
                 "message": "falha simulada",
@@ -420,5 +461,5 @@ def test_dead_process_clears_alive_flag_after_worker_error_event(
 
     manager.poll_events()
 
-    assert manager.state("dead-after-error").state == "error"
+    assert manager.state("dead-after-error").state == "worker_crashed"
     assert manager.state("dead-after-error").alive is False

@@ -6,6 +6,13 @@ from pathlib import Path
 from typing import Any
 
 from .models import TerminalConnectionStatus, TerminalProfile, TickSnapshot
+from .terminal_states import (
+    WorkerConnectionState,
+    account_identity_matches,
+    classify_initialize_failure,
+    is_communication_error,
+    terminal_path_matches,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -32,6 +39,7 @@ class MT5Connector:
                 terminal_id=self.profile.id,
                 ok=False,
                 message="Biblioteca MetaTrader5 não instalada. Rode: pip install MetaTrader5",
+                state=WorkerConnectionState.CONFIGURATION_ERROR.value,
                 terminal_path=self.profile.terminal_exe,
             )
 
@@ -41,6 +49,7 @@ class MT5Connector:
                 terminal_id=self.profile.id,
                 ok=False,
                 message=f"terminal64.exe não encontrado: {terminal_path}",
+                state=WorkerConnectionState.CONFIGURATION_ERROR.value,
                 terminal_path=str(terminal_path),
             )
 
@@ -51,10 +60,18 @@ class MT5Connector:
             )
             if not initialized:
                 code, msg = mt5.last_error()
+                state = classify_initialize_failure(code, msg)
+                message = f"Falha ao inicializar MT5: {code} - {msg}"
+                if state == WorkerConnectionState.AUTHENTICATION_FAILED.value:
+                    message = (
+                        "Falha de autenticação no MT5. Faça login manualmente e verifique "
+                        f"conta, senha e servidor. ({code} - {msg})"
+                    )
                 return TerminalConnectionStatus(
                     terminal_id=self.profile.id,
                     ok=False,
-                    message=f"Falha ao inicializar MT5: {code} - {msg}",
+                    message=message,
+                    state=state,
                     terminal_path=str(terminal_path),
                 )
             self.initialized = True
@@ -67,6 +84,7 @@ class MT5Connector:
                 terminal_id=self.profile.id,
                 ok=False,
                 message="Biblioteca MetaTrader5 não instalada.",
+                state=WorkerConnectionState.CONFIGURATION_ERROR.value,
                 terminal_path=self.profile.terminal_exe,
             )
 
@@ -75,6 +93,7 @@ class MT5Connector:
                 terminal_id=self.profile.id,
                 ok=False,
                 message="Conexão MT5 ainda não inicializada.",
+                state=WorkerConnectionState.STARTING.value,
                 terminal_path=self.profile.terminal_exe,
             )
 
@@ -83,30 +102,84 @@ class MT5Connector:
         if account is None:
             code, msg = mt5.last_error()
             suffix = f" ({code} - {msg})" if code or msg else ""
-            error_text = str(msg or "").casefold()
-            communication_error = any(
-                marker in error_text
-                for marker in ("ipc", "send failed", "internal fail", "pipe")
-            )
+            communication_error = is_communication_error(msg)
+            classified_state = classify_initialize_failure(code, msg) if code or msg else ""
+            if classified_state == WorkerConnectionState.AUTHENTICATION_FAILED.value:
+                return TerminalConnectionStatus(
+                    terminal_id=self.profile.id,
+                    ok=False,
+                    message=(
+                        "Falha de autenticação no MT5. Faça login manualmente e verifique "
+                        f"conta, senha e servidor.{suffix}"
+                    ),
+                    state=classified_state,
+                    terminal_path=self.profile.terminal_exe,
+                )
+            if classified_state == WorkerConnectionState.CONFIGURATION_ERROR.value:
+                return TerminalConnectionStatus(
+                    terminal_id=self.profile.id,
+                    ok=False,
+                    message=f"Configuração do conector MT5 indisponível.{suffix}",
+                    state=classified_state,
+                    terminal_path=self.profile.terminal_exe,
+                )
+            retrying_error = communication_error or bool(code or msg)
             return TerminalConnectionStatus(
                 terminal_id=self.profile.id,
                 ok=False,
                 message=(
                     "Comunicação com o MT5 foi interrompida; tentando reconectar." + suffix
-                    if communication_error
+                    if retrying_error
                     else "MT5 aberto, mas sem conta logada. Faça login manual no terminal." + suffix
+                ),
+                state=(
+                    WorkerConnectionState.RECONNECTING.value
+                    if retrying_error
+                    else WorkerConnectionState.WAITING_LOGIN.value
                 ),
                 terminal_path=self.profile.terminal_exe,
             )
 
         connected = bool(getattr(terminal, "connected", True)) if terminal else True
+        connected_path = getattr(terminal, "path", None) if terminal else None
+        account_login = getattr(account, "login", None)
+        account_server = getattr(account, "server", None)
+        if not terminal_path_matches(self.profile.terminal_exe, connected_path):
+            return TerminalConnectionStatus(
+                terminal_id=self.profile.id,
+                ok=False,
+                message=(
+                    "A biblioteca MetaTrader5 conectou a outro terminal. "
+                    "Feche os MT5 não controlados e reinicie esta leitura."
+                ),
+                state=WorkerConnectionState.TERMINAL_MISMATCH.value,
+                account_login=account_login,
+                server=account_server,
+                company=getattr(account, "company", None),
+                terminal_path=connected_path,
+            )
+        if not account_identity_matches(self.profile.account_login, account_login):
+            return TerminalConnectionStatus(
+                terminal_id=self.profile.id,
+                ok=False,
+                message=(
+                    f"Conta conectada {account_login} diferente da conta cadastrada "
+                    f"{self.profile.account_login}. Faça login na conta correta dentro do MT5."
+                ),
+                state=WorkerConnectionState.ACCOUNT_MISMATCH.value,
+                account_login=account_login,
+                server=account_server,
+                company=getattr(account, "company", None),
+                terminal_path=connected_path or self.profile.terminal_exe,
+            )
         if not connected:
             return TerminalConnectionStatus(
                 terminal_id=self.profile.id,
                 ok=False,
                 message="Terminal encontrado, mas sem conexão com a corretora.",
-                account_login=getattr(account, "login", None),
-                server=getattr(account, "server", None),
+                state=WorkerConnectionState.BROKER_DISCONNECTED.value,
+                account_login=account_login,
+                server=account_server,
                 company=getattr(account, "company", None),
                 balance=getattr(account, "balance", None),
                 currency=getattr(account, "currency", None),
@@ -117,8 +190,9 @@ class MT5Connector:
             terminal_id=self.profile.id,
             ok=True,
             message="Conexão persistente ativa.",
-            account_login=getattr(account, "login", None),
-            server=getattr(account, "server", None),
+            state=WorkerConnectionState.CONNECTED.value,
+            account_login=account_login,
+            server=account_server,
             company=getattr(account, "company", None),
             balance=getattr(account, "balance", None),
             currency=getattr(account, "currency", None),

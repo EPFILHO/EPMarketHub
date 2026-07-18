@@ -212,3 +212,46 @@ def test_stop_all_continues_after_one_terminal_fails(tmp_path: Path, monkeypatch
 
     assert stopped == 2
     assert stopped_ids == ["one", "three"]
+
+
+def test_stop_all_counts_only_terminals_confirmed_closed(tmp_path: Path, monkeypatch) -> None:
+    manager = build_manager(tmp_path)
+    profiles = [
+        TerminalProfile(id="closed", label="Closed"),
+        TerminalProfile(id="resistant", label="Resistant"),
+    ]
+    monkeypatch.setattr(manager, "stop", lambda *args, **kwargs: True)
+    monkeypatch.setattr(
+        manager,
+        "is_running",
+        lambda terminal_id, profile=None: terminal_id == "resistant",
+    )
+
+    stopped = manager.stop_all(profiles, timeout=0)
+
+    assert stopped == 1
+
+
+def test_process_count_exposes_duplicate_executables(tmp_path: Path, monkeypatch) -> None:
+    manager = build_manager(tmp_path)
+    profile = TerminalProfile(id="duplicate", label="Duplicate")
+    monkeypatch.setattr(manager, "_find_processes", lambda _profile: [object(), object()])
+
+    assert manager.process_count(profile) == 2
+
+
+def test_process_count_includes_just_launched_tracked_process(tmp_path: Path, monkeypatch) -> None:
+    manager = build_manager(tmp_path)
+    profile = TerminalProfile(id="opening", label="Opening")
+
+    class TrackedProcess:
+        pid = 777
+
+        @staticmethod
+        def poll():
+            return None
+
+    manager._processes[profile.id] = TrackedProcess()
+    monkeypatch.setattr(manager, "_find_processes", lambda _profile: [])
+
+    assert manager.process_count(profile) == 1

@@ -12,6 +12,7 @@ from uuid import uuid4
 import psutil
 
 from .models import TerminalProfile
+from .terminal_states import InstanceIntegrityState
 
 logger = logging.getLogger(__name__)
 
@@ -57,22 +58,22 @@ class TerminalManager:
         instance_dir = Path(profile.instance_dir).resolve()
         terminal_exe = instance_dir / "terminal64.exe"
         if not self._is_inside_instances(instance_dir):
-            state = "invalid_path"
+            state = InstanceIntegrityState.INVALID_PATH.value
             message = "A pasta cadastrada não pertence à área controlada do EP Market Hub."
         elif not instance_dir.exists():
-            state = "directory_missing"
+            state = InstanceIntegrityState.DIRECTORY_MISSING.value
             message = "A pasta local desta instância não foi encontrada."
         elif not instance_dir.is_dir():
-            state = "invalid_path"
+            state = InstanceIntegrityState.INVALID_PATH.value
             message = "O caminho esperado da instância existe, mas não é uma pasta."
         elif not terminal_exe.is_file():
-            state = "executable_missing"
+            state = InstanceIntegrityState.EXECUTABLE_MISSING.value
             message = "A pasta existe, mas o terminal64.exe não foi encontrado."
         else:
-            state = "ready"
+            state = InstanceIntegrityState.READY.value
             message = "Instância local pronta."
         return {
-            "ready": state == "ready",
+            "ready": state == InstanceIntegrityState.READY.value,
             "state": state,
             "path": str(instance_dir),
             "terminal_exe": str(terminal_exe),
@@ -381,8 +382,15 @@ class TerminalManager:
         for profile in profiles:
             try:
                 self.remember(profile)
-                if self.stop(profile.id, timeout=timeout, profile=profile):
+                stop_requested = self.stop(profile.id, timeout=timeout, profile=profile)
+                still_running = self.is_running(profile.id, profile)
+                if stop_requested and not still_running:
                     stopped += 1
+                if still_running:
+                    logger.error(
+                        "O MT5 %s permaneceu aberto após o encerramento do aplicativo.",
+                        profile.id,
+                    )
             except Exception:
                 logger.exception("Falha inesperada ao encerrar o MT5 %s", profile.id)
         return stopped
@@ -399,6 +407,16 @@ class TerminalManager:
 
     def is_executable_running(self, terminal_exe: str | Path) -> bool:
         return bool(self._find_processes_for_executable(terminal_exe))
+
+    def process_count(self, profile: TerminalProfile) -> int:
+        processes = self._find_processes(profile)
+        tracked = self._processes.get(profile.id)
+        if tracked and tracked.poll() is None:
+            tracked_pid = getattr(tracked, "pid", None)
+            found_pids = {getattr(process, "pid", None) for process in processes}
+            if tracked_pid not in found_pids:
+                return len(processes) + 1
+        return len(processes)
 
     def _is_inside_instances(self, path: Path) -> bool:
         try:

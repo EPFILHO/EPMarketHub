@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import multiprocessing as mp
 import queue
+import time
 from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
@@ -11,6 +12,7 @@ from typing import Any
 from .config import MAX_ACTIVE_TERMINALS
 from .models import SymbolDefinition, TerminalProfile
 from .mt5_worker import mt5_worker_main
+from .terminal_states import WORKER_UNRESPONSIVE_SECONDS, WorkerConnectionState
 from .worker_protocol import WorkerEvent, WorkerState, now_iso, valid_worker_event, worker_command
 
 logger = logging.getLogger(__name__)
@@ -32,11 +34,13 @@ class MT5WorkerManager:
         refresh_seconds: float = 2.0,
         live_poll_seconds: float = 0.20,
         max_workers: int = MAX_ACTIVE_TERMINALS,
+        unresponsive_seconds: float = WORKER_UNRESPONSIVE_SECONDS,
     ):
         self.context = mp.get_context("spawn")
         self.refresh_seconds = refresh_seconds
         self.live_poll_seconds = live_poll_seconds
         self.max_workers = max(1, int(max_workers))
+        self.unresponsive_seconds = max(1.0, float(unresponsive_seconds))
         self.event_queue = self.context.Queue(maxsize=2048)
         self._handles: dict[str, WorkerHandle] = {}
         self._states: dict[str, WorkerState] = {}
@@ -44,6 +48,7 @@ class MT5WorkerManager:
         self._live_slots: dict[str, dict[str, Any]] = {}
         self._live_ticks: dict[str, dict[str, Any]] = {}
         self._live_statuses: dict[str, dict[str, Any]] = {}
+        self._last_activity: dict[str, float] = {}
         self._shutdown = False
 
     @staticmethod
@@ -101,7 +106,7 @@ class MT5WorkerManager:
             self._close_queue(command_queue)
             self._states[profile.id] = WorkerState(
                 terminal_id=profile.id,
-                state="error",
+                state=WorkerConnectionState.WORKER_START_FAILED.value,
                 connected=False,
                 alive=False,
                 message=f"Não foi possível criar o processo worker: {exc}",
@@ -112,13 +117,14 @@ class MT5WorkerManager:
         self._handles[profile.id] = handle
         self._states[profile.id] = WorkerState(
             terminal_id=profile.id,
-            state="starting",
+            state=WorkerConnectionState.STARTING.value,
             connected=False,
             alive=True,
             message="Worker iniciado; conectando ao MT5...",
             pid=process.pid,
             started_at=now_iso(),
         )
+        self._last_activity[profile.id] = time.monotonic()
         self._restore_live_streams(profile.id)
         return True, "Leitura persistente iniciada."
 
@@ -142,6 +148,16 @@ class MT5WorkerManager:
             self._states[terminal_id] = WorkerState(terminal_id=terminal_id)
             self._mark_live_terminal_stopped(terminal_id)
             return False, "A leitura deste terminal já está parada."
+
+        current = self._states.setdefault(terminal_id, WorkerState(terminal_id=terminal_id))
+        current.update(
+            {
+                "state": WorkerConnectionState.STOPPING.value,
+                "connected": False,
+                "alive": True,
+                "message": "Encerrando leitura persistente...",
+            }
+        )
 
         try:
             handle.command_queue.put_nowait(worker_command("stop"))
@@ -174,7 +190,7 @@ class MT5WorkerManager:
         if handle.process.is_alive():
             self._states[terminal_id] = WorkerState(
                 terminal_id=terminal_id,
-                state="error",
+                state=WorkerConnectionState.STOP_FAILED.value,
                 connected=False,
                 alive=True,
                 message="Worker não respondeu ao encerramento forçado.",
@@ -185,7 +201,7 @@ class MT5WorkerManager:
         self._cleanup_handle(terminal_id, handle)
         self._states[terminal_id] = WorkerState(
             terminal_id=terminal_id,
-            state="stopped",
+            state=WorkerConnectionState.STOPPED.value,
             connected=False,
             alive=False,
             message="Desconectado.",
@@ -229,6 +245,7 @@ class MT5WorkerManager:
     def forget_terminal(self, terminal_id: str) -> None:
         self._states.pop(terminal_id, None)
         self._snapshots.pop(terminal_id, None)
+        self._last_activity.pop(terminal_id, None)
         self.clear_live_streams_for_terminal(terminal_id)
 
     def request_snapshot(self, terminal_id: str) -> tuple[bool, str]:
@@ -362,6 +379,7 @@ class MT5WorkerManager:
                 events.append(event)
 
         self._detect_dead_workers(events)
+        self._detect_unresponsive_workers(events)
         return events
 
     def _apply_event(self, event: dict[str, Any]) -> bool:
@@ -381,6 +399,7 @@ class MT5WorkerManager:
                 state.pid,
             )
             return False
+        self._last_activity[terminal_id] = time.monotonic()
         if event_type == "snapshot":
             snapshot = data.get("snapshot")
             if isinstance(snapshot, dict):
@@ -390,7 +409,11 @@ class MT5WorkerManager:
                 state.update(
                     {
                         "connected": bool(status.get("ok")),
-                        "state": "connected" if status.get("ok") else "reconnecting",
+                        "state": status.get("state") or (
+                            WorkerConnectionState.CONNECTED.value
+                            if status.get("ok")
+                            else WorkerConnectionState.RECONNECTING.value
+                        ),
                         "message": status.get("message", state.message),
                         "account_login": status.get("account_login"),
                         "server": status.get("server"),
@@ -446,10 +469,15 @@ class MT5WorkerManager:
             if handle.process.is_alive():
                 continue
             state = self._states.setdefault(terminal_id, WorkerState(terminal_id=terminal_id))
-            if state.state not in {"stopped", "error"}:
+            if state.state not in {
+                WorkerConnectionState.STOPPED.value,
+                WorkerConnectionState.ERROR.value,
+                WorkerConnectionState.WORKER_CRASHED.value,
+                WorkerConnectionState.STOP_FAILED.value,
+            }:
                 state.update(
                     {
-                        "state": "error",
+                        "state": WorkerConnectionState.WORKER_CRASHED.value,
                         "alive": False,
                         "connected": False,
                         "message": f"Worker terminou inesperadamente (código {handle.process.exitcode}).",
@@ -468,8 +496,46 @@ class MT5WorkerManager:
             self._mark_live_terminal_stopped(terminal_id)
             self._cleanup_handle(terminal_id, handle)
 
+    def _detect_unresponsive_workers(self, events: list[dict[str, Any]]) -> None:
+        now = time.monotonic()
+        for terminal_id, handle in self._handles.items():
+            if not handle.process.is_alive():
+                continue
+            last_activity = self._last_activity.get(terminal_id, now)
+            if now - last_activity < self.unresponsive_seconds:
+                continue
+            state = self._states.setdefault(terminal_id, WorkerState(terminal_id=terminal_id))
+            if state.state in {
+                WorkerConnectionState.STOPPED.value,
+                WorkerConnectionState.STOPPING.value,
+                WorkerConnectionState.UNRESPONSIVE.value,
+                WorkerConnectionState.ERROR.value,
+                WorkerConnectionState.WORKER_CRASHED.value,
+                WorkerConnectionState.STOP_FAILED.value,
+            }:
+                continue
+            state.update(
+                {
+                    "state": WorkerConnectionState.UNRESPONSIVE.value,
+                    "alive": True,
+                    "connected": False,
+                    "message": (
+                        "O processo worker continua vivo, mas deixou de responder. "
+                        "Pare a tentativa e reinicie a leitura."
+                    ),
+                }
+            )
+            events.append(
+                WorkerEvent(
+                    terminal_id=terminal_id,
+                    event="status",
+                    data=state.to_dict(),
+                ).to_dict()
+            )
+
     def _cleanup_handle(self, terminal_id: str, handle: WorkerHandle) -> None:
         self._handles.pop(terminal_id, None)
+        self._last_activity.pop(terminal_id, None)
         self._close_queue(handle.command_queue)
 
     @staticmethod

@@ -4,6 +4,8 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from typing import Any
 
+from .terminal_states import WorkerConnectionState
+
 WORKER_PROTOCOL_VERSION = 1
 
 WORKER_COMMAND_TYPES = frozenset(
@@ -87,7 +89,7 @@ class WorkerState:
     """Estado observável de um worker MT5 no processo principal."""
 
     terminal_id: str
-    state: str = "stopped"
+    state: str = WorkerConnectionState.STOPPED.value
     connected: bool = False
     alive: bool = False
     message: str = "Desconectado."

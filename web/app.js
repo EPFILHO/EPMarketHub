@@ -10,6 +10,7 @@ let workerSummarySignature = '';
 let dashboardTerminalSignature = '';
 const SELECTED_TERMINALS_KEY = 'ep_market_hub_selected_terminals_v1';
 let selectedTerminalIds = new Set();
+let bulkOpenInProgress = false;
 let bulkCloseInProgress = false;
 let pendingOrphanCandidate = null;
 
@@ -220,7 +221,7 @@ function terminalBulkActionState(rows, selectedIds, states, maxActive) {
   const selected = rows.filter(t => selectedIds.has(t.id));
   const openCount = rows.filter(t => t.running).length;
   const activeWorkerCount = rows.filter(t => (states[t.id] || t.worker || {}).alive).length;
-  const candidates = selected.filter(t => {
+  const candidates = selected.filter(t => t.enabled !== false).filter(t => {
     const worker = states[t.id] || t.worker || {};
     return !t.running || !worker.alive;
   });
@@ -237,6 +238,7 @@ function terminalBulkActionState(rows, selectedIds, states, maxActive) {
 
   let openTitle = 'Abre os MT5 selecionados e inicia suas leituras';
   if (!selected.length) openTitle = 'Selecione pelo menos um terminal';
+  else if (!candidates.length && selected.some(t => t.enabled === false)) openTitle = 'Os terminais selecionados estão desativados';
   else if (!candidates.length) openTitle = 'Todos os terminais selecionados já estão abertos com leitura ativa';
   else if (!maxActive) openTitle = 'O limite simultâneo do kernel ainda não foi carregado';
   else if (exceedsCapacity) openTitle = `Não há vagas para abrir toda a seleção (limite de ${maxActive} MT5)`;
@@ -262,7 +264,7 @@ function updateSelectionUi() {
     if (input.checked !== checked) input.checked = checked;
     input.closest('.terminal-item')?.classList.toggle('selected', checked);
     const terminal = terminals.find(item => item.id === input.dataset.terminalSelect);
-    input.disabled = bulkCloseInProgress || !terminalInstanceReady(terminal);
+    input.disabled = bulkOpenInProgress || bulkCloseInProgress || terminal?.enabled === false || !terminalInstanceReady(terminal);
   });
 
   const count = selectedTerminalIds.size;
@@ -271,17 +273,17 @@ function updateSelectionUi() {
   const closeButton = document.getElementById('btnCloseSelected');
   const state = terminalBulkActionState(terminals, selectedTerminalIds, workerStates, maxActive);
   if (openButton) {
-    openButton.disabled = state.openDisabled || bulkCloseInProgress;
+    openButton.disabled = state.openDisabled || bulkOpenInProgress || bulkCloseInProgress;
     openButton.title = state.openTitle;
   }
   if (closeButton) {
-    closeButton.disabled = state.closeDisabled || bulkCloseInProgress;
+    closeButton.disabled = state.closeDisabled || bulkOpenInProgress || bulkCloseInProgress;
     closeButton.title = state.closeTitle;
   }
 }
 
 function toggleTerminalSelection(terminalId, checked) {
-  if (bulkCloseInProgress) return;
+  if (bulkOpenInProgress || bulkCloseInProgress) return;
   const maxActive = activeTerminalLimit();
   if (checked && !selectedTerminalIds.has(terminalId) && selectedTerminalIds.size >= maxActive) {
     const input = document.querySelector(`[data-terminal-select="${terminalId}"]`);
@@ -298,10 +300,21 @@ function workerLabel(state) {
   const labels = {
     stopped: 'desconectado',
     starting: 'iniciando',
+    stopping: 'encerrando',
     connected: 'conectado',
     waiting_login: 'aguardando login',
+    authentication_failed: 'falha de autenticação',
+    account_mismatch: 'conta divergente',
+    broker_disconnected: 'corretora desconectada',
     reopening_terminal: 'reconectando',
     reconnecting: 'reconectando',
+    configuration_error: 'configuração inválida',
+    terminal_mismatch: 'terminal divergente',
+    unresponsive: 'worker sem resposta',
+    attention_required: 'requer atenção',
+    worker_start_failed: 'falha ao iniciar leitura',
+    worker_crashed: 'worker interrompido',
+    stop_failed: 'falha ao encerrar worker',
     error: 'erro'
   };
   return labels[state] || state || 'desconectado';
@@ -309,8 +322,8 @@ function workerLabel(state) {
 
 function workerBadgeClass(worker) {
   if (worker?.connected) return 'ok';
-  if (worker?.state === 'waiting_login' || worker?.state === 'reopening_terminal' || worker?.state === 'reconnecting' || worker?.state === 'starting') return 'warn';
-  if (worker?.state === 'error') return 'bad';
+  if (['starting', 'stopping', 'waiting_login', 'reopening_terminal', 'reconnecting', 'broker_disconnected', 'attention_required'].includes(worker?.state)) return 'warn';
+  if (['authentication_failed', 'account_mismatch', 'configuration_error', 'terminal_mismatch', 'unresponsive', 'worker_start_failed', 'worker_crashed', 'stop_failed', 'error'].includes(worker?.state)) return 'bad';
   return '';
 }
 
@@ -327,27 +340,42 @@ function terminalProcessLabel(terminal, worker) {
   if (instanceState === 'directory_missing') return 'Instância ausente';
   if (instanceState === 'executable_missing') return 'Executável ausente';
   if (instanceState === 'invalid_path') return 'Caminho inválido';
-  if (worker?.state === 'reopening_terminal') return 'Reabrindo MT5';
-  if (worker?.state === 'reconnecting') return 'MT5 sem comunicação';
-  return `MT5 ${terminal?.running ? 'aberto' : 'fechado'}`;
+  const processState = terminal?.process_state || (terminal?.running ? 'open' : 'closed');
+  const labels = {
+    closed: 'MT5 fechado',
+    opening: 'Abrindo MT5',
+    open: 'MT5 aberto',
+    closing: 'Fechando MT5',
+    reopening: 'Reabrindo MT5',
+    launch_failed: 'Falha ao abrir MT5',
+    close_failed: 'Falha ao fechar MT5',
+    duplicate_process: 'Processos duplicados',
+  };
+  return labels[processState] || `MT5 ${terminal?.running ? 'aberto' : 'fechado'}`;
 }
 
 function terminalProcessBadgeClass(terminal, worker) {
   if (!terminalInstanceReady(terminal)) return 'bad';
-  if (worker?.state === 'reopening_terminal' || worker?.state === 'reconnecting') return 'warn';
-  return terminal?.running ? 'ok' : '';
+  const processState = terminal?.process_state || (terminal?.running ? 'open' : 'closed');
+  if (['launch_failed', 'close_failed', 'duplicate_process'].includes(processState)) return 'bad';
+  if (['opening', 'closing', 'reopening'].includes(processState)) return 'warn';
+  return processState === 'open' ? 'ok' : '';
 }
 
 function terminalActionState(terminal, worker, openCount, activeWorkerCount, maxActive) {
   const workerAlive = Boolean(worker?.alive);
+  const terminalEnabled = terminal?.enabled !== false;
   const instanceReady = terminalInstanceReady(terminal);
+  const processState = terminal?.process_state || (terminal?.running ? 'open' : 'closed');
+  const processBusy = ['opening', 'closing', 'reopening'].includes(processState);
+  const processFaulted = processState === 'duplicate_process';
   const capacityUnavailable = !maxActive
     || openCount >= maxActive
     || activeWorkerCount >= maxActive;
-  const openBlocked = !instanceReady || (!terminal.running && capacityUnavailable);
+  const openBlocked = !terminalEnabled || processBusy || !instanceReady || (!terminal.running && capacityUnavailable);
   const readingBlocked = workerAlive
     ? false
-    : (!instanceReady || !terminal.running || !maxActive || activeWorkerCount >= maxActive);
+    : (!terminalEnabled || processBusy || processFaulted || !instanceReady || !terminal.running || !maxActive || activeWorkerCount >= maxActive);
   const readingLabel = workerAlive
     ? (worker.connected ? 'Parar leitura' : 'Parar tentativa')
     : 'Iniciar leitura';
@@ -363,8 +391,9 @@ function terminalActionState(terminal, worker, openCount, activeWorkerCount, max
     readingBlocked,
     readingLabel,
     readingTitle,
-    editBlocked: Boolean(!instanceReady || terminal.running || workerAlive),
-    deleteBlocked: Boolean(terminal.running || workerAlive),
+    editBlocked: Boolean(processBusy || !instanceReady || terminal.running || workerAlive),
+    deleteBlocked: Boolean(processBusy || terminal.running || workerAlive),
+    closeBlocked: Boolean(processState === 'closing' || !terminal.running),
   };
 }
 
@@ -372,7 +401,9 @@ function renderTerminals(rows) {
   terminals = (rows || []).slice().sort(compareTerminal);
   const selectedCountBeforeHealthCheck = selectedTerminalIds.size;
   terminals.forEach(terminal => {
-    if (!terminalInstanceReady(terminal)) selectedTerminalIds.delete(terminal.id);
+    if (!terminalInstanceReady(terminal) || terminal.enabled === false) {
+      selectedTerminalIds.delete(terminal.id);
+    }
   });
   if (selectedTerminalIds.size !== selectedCountBeforeHealthCheck) persistSelectedTerminals();
   terminals.forEach(t => {
@@ -414,7 +445,7 @@ function renderTerminals(rows) {
       <div class="terminal-item ${selected ? 'selected' : ''}" id="terminalItem-${escapeHtml(t.id)}" data-terminal-id="${escapeHtml(t.id)}">
         <div class="terminal-select-row">
           <label class="terminal-select-label">
-            <input type="checkbox" data-terminal-select="${escapeHtml(t.id)}" ${selected ? 'checked' : ''} ${instanceReady ? '' : 'disabled'}
+            <input type="checkbox" data-terminal-select="${escapeHtml(t.id)}" ${selected ? 'checked' : ''} ${instanceReady && t.enabled !== false ? '' : 'disabled'}
                    onchange="toggleTerminalSelection('${escapeJs(t.id)}', this.checked)" />
             <span>Selecionar</span>
           </label>
@@ -442,7 +473,7 @@ function renderTerminals(rows) {
                   onclick="toggleReading('${escapeJs(t.id)}')" ${actionState.readingBlocked ? 'disabled' : ''}
                   title="${actionState.readingTitle}">${actionState.readingLabel}</button>
           <button data-role="reconnect-button" onclick="reconnectWorker('${escapeJs(t.id)}')" ${worker.connected ? '' : 'disabled'}>Reconectar</button>
-          <button data-role="close-button" class="danger" onclick="stopTerminal('${escapeJs(t.id)}')" ${t.running ? '' : 'disabled'}>Fechar MT5</button>
+          <button data-role="close-button" class="danger" onclick="stopTerminal('${escapeJs(t.id)}')" ${actionState.closeBlocked ? 'disabled' : ''}>Fechar MT5</button>
           <button data-role="delete-button" class="danger" onclick="${deleteAction}('${escapeJs(t.id)}')" ${actionState.deleteBlocked ? 'disabled' : ''} title="${actionState.deleteBlocked ? 'Feche o MT5 e pare a leitura antes de resolver a instância' : (instanceReady ? 'Exclui o cadastro e a pasta local da instância' : escapeHtml(instanceMessage))}">${instanceReady ? 'Excluir' : 'Resolver'}</button>
         </div>
       </div>
@@ -492,9 +523,17 @@ function updateTerminalWorkerRows() {
     }
     setHtmlIfChanged(item.querySelector('.worker-detail'), terminalWorkerDetailHtml(worker, t));
 
+    const actionState = terminalActionState(
+      t,
+      worker,
+      openCount,
+      activeWorkerCount,
+      maxActive,
+    );
+
     const editButton = item.querySelector('[data-role="edit-button"]');
     if (editButton) {
-      const blocked = Boolean(!terminalInstanceReady(t) || t.running || worker.alive);
+      const blocked = actionState.editBlocked;
       editButton.disabled = blocked;
       editButton.title = blocked
         ? (!terminalInstanceReady(t)
@@ -503,13 +542,6 @@ function updateTerminalWorkerRows() {
         : 'Edita o cadastro do terminal';
     }
 
-    const actionState = terminalActionState(
-      t,
-      worker,
-      openCount,
-      activeWorkerCount,
-      maxActive,
-    );
     const limitTitle = `Limite de ${maxActive} MT5 simultâneos atingido`;
     const openButton = item.querySelector('[data-role="open-button"]');
     if (openButton) {
@@ -533,7 +565,7 @@ function updateTerminalWorkerRows() {
     const reconnectButton = item.querySelector('[data-role="reconnect-button"]');
     if (reconnectButton) reconnectButton.disabled = !worker.connected;
     const closeButton = item.querySelector('[data-role="close-button"]');
-    if (closeButton) closeButton.disabled = !t.running;
+    if (closeButton) closeButton.disabled = actionState.closeBlocked;
     const deleteButton = item.querySelector('[data-role="delete-button"]');
     if (deleteButton) {
       deleteButton.disabled = actionState.deleteBlocked;
@@ -1309,19 +1341,34 @@ async function removeMissingTerminal() {
   }
 }
 
+function setLocalProcessTransition(terminalId, processState) {
+  const terminal = terminals.find(row => row.id === terminalId);
+  if (!terminal) return;
+  terminal.process_state = processState;
+  updateTerminalCards();
+}
+
 async function launchTerminal(id) {
-  const res = parseResponse(await bridge.launchTerminal(id));
-  toast(res.message, !res.ok);
-  await loadWorkerStates();
-  await loadTerminals();
+  setLocalProcessTransition(id, 'opening');
+  try {
+    const res = parseResponse(await bridge.launchTerminal(id));
+    toast(res.message, !res.ok);
+  } finally {
+    await loadWorkerStates();
+    await loadTerminals();
+  }
 }
 
 async function stopTerminal(id) {
-  const res = parseResponse(await bridge.stopTerminal(id));
-  toast(res.message, !res.ok);
-  await loadWorkerStates();
-  await loadTerminals();
-  await loadLiveStreams();
+  setLocalProcessTransition(id, 'closing');
+  try {
+    const res = parseResponse(await bridge.stopTerminal(id));
+    toast(res.message, !res.ok);
+  } finally {
+    await loadWorkerStates();
+    await loadTerminals();
+    await loadLiveStreams();
+  }
 }
 
 async function toggleReading(id) {
@@ -1340,10 +1387,22 @@ async function reconnectWorker(id) {
 async function openSelectedTerminals() {
   const ids = selectedTerminalList();
   if (!ids.length) return toast('Selecione pelo menos um terminal.', true);
-  const res = parseResponse(await bridge.startSelectedWorkers(JSON.stringify(ids)));
-  toast(res.message, !res.ok);
-  await loadWorkerStates();
-  await loadTerminals();
+  if (bulkOpenInProgress || bulkCloseInProgress) return;
+  bulkOpenInProgress = true;
+  updateSelectionUi();
+  ids.forEach(id => {
+    const terminal = terminals.find(row => row.id === id);
+    if (terminal && !terminal.running) setLocalProcessTransition(id, 'opening');
+  });
+  try {
+    const res = parseResponse(await bridge.startSelectedWorkers(JSON.stringify(ids)));
+    toast(res.message, !res.ok);
+  } finally {
+    await loadWorkerStates();
+    await loadTerminals();
+    bulkOpenInProgress = false;
+    updateSelectionUi();
+  }
 }
 
 function closeBatchSummary(total, failures) {
@@ -1357,7 +1416,7 @@ function closeBatchSummary(total, failures) {
 async function closeSelectedTerminals() {
   const ids = selectedTerminalList();
   if (!ids.length) return toast('Selecione pelo menos um terminal.', true);
-  if (bulkCloseInProgress) return;
+  if (bulkOpenInProgress || bulkCloseInProgress) return;
 
   const button = document.getElementById('btnCloseSelected');
   let failures = 0;
@@ -1367,6 +1426,7 @@ async function closeSelectedTerminals() {
     for (let index = 0; index < ids.length; index++) {
       const terminalId = ids[index];
       if (button) button.textContent = `Fechando ${index + 1}/${ids.length}...`;
+      setLocalProcessTransition(terminalId, 'closing');
       const res = parseResponse(await bridge.stopTerminal(terminalId));
       if (res.ok) {
         Object.keys(liveTicks).forEach(slotId => {

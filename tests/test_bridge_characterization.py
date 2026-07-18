@@ -126,6 +126,9 @@ class FakeTerminalManager:
         self.renamed = []
         self.rolled_back_renames = []
         self.instance_states = {}
+        self.process_counts = {}
+        self.failed_stop_ids = set()
+        self.failed_launch_ids = set()
         self.repaired = []
         self.forgotten = []
 
@@ -154,17 +157,24 @@ class FakeTerminalManager:
     def is_running(self, terminal_id: str, profile=None) -> bool:
         return terminal_id in self.open_ids
 
+    def process_count(self, profile: TerminalProfile) -> int:
+        return self.process_counts.get(profile.id, int(profile.id in self.open_ids))
+
     def running_count(self, profiles) -> int:
         return sum(profile.id in self.open_ids for profile in profiles)
 
     def launch(self, profile: TerminalProfile, minimized: bool = True) -> None:
         self.launched.append(profile.id)
         self.launch_minimized.append(minimized)
+        if profile.id in self.failed_launch_ids:
+            raise OSError("falha simulada ao abrir terminal")
         self.open_ids.add(profile.id)
 
     def stop(self, terminal_id: str, profile=None) -> bool:
         self.stopped.append(terminal_id)
         was_open = terminal_id in self.open_ids
+        if terminal_id in self.failed_stop_ids:
+            return False
         self.open_ids.discard(terminal_id)
         return was_open
 
@@ -297,6 +307,55 @@ def test_runtime_limit_payload_uses_injected_product_policy(tmp_path: Path) -> N
 
     assert response["ok"] is True
     assert response["data"]["max_active_mt5"] == 4
+
+
+def test_newly_launched_terminal_remains_opening_until_first_worker_status(
+    tmp_path: Path,
+) -> None:
+    bridge, _, worker_manager = build_bridge(tmp_path, ["one"])
+
+    response = json.loads(bridge.launchTerminal("one"))
+    opening = json.loads(bridge.getTerminals())["data"][0]
+    worker_manager.events.append(
+        {
+            "terminal_id": "one",
+            "event": "status",
+            "data": {"state": "connected", "alive": True, "connected": True},
+        }
+    )
+    connected = json.loads(bridge.getTerminals())["data"][0]
+
+    assert response["ok"] is True
+    assert opening["process_state"] == "opening"
+    assert connected["process_state"] == "open"
+
+
+def test_duplicate_terminal_processes_are_exposed_as_kernel_error(tmp_path: Path) -> None:
+    bridge, terminal_manager, _ = build_bridge(tmp_path, ["one"])
+    terminal_manager.open_ids.add("one")
+    terminal_manager.process_counts["one"] = 2
+
+    terminal = json.loads(bridge.getTerminals())["data"][0]
+
+    assert terminal["running"] is True
+    assert terminal["process_count"] == 2
+    assert terminal["process_state"] == "duplicate_process"
+
+    start_response = json.loads(bridge.startWorker("one"))
+    assert start_response["ok"] is False
+    assert "2 processos" in start_response["message"]
+
+
+def test_launch_failure_remains_visible_in_process_state(tmp_path: Path) -> None:
+    bridge, terminal_manager, _ = build_bridge(tmp_path, ["one"])
+    terminal_manager.failed_launch_ids.add("one")
+
+    response = json.loads(bridge.launchTerminal("one"))
+    terminal = json.loads(bridge.getTerminals())["data"][0]
+
+    assert response["ok"] is False
+    assert terminal["running"] is False
+    assert terminal["process_state"] == "launch_failed"
 
 
 def test_worker_restart_request_reopens_terminal_minimized_once(tmp_path: Path) -> None:
@@ -453,6 +512,22 @@ def test_launch_does_not_open_mt5_when_worker_capacity_is_full(tmp_path: Path) -
     assert terminal_manager.launched == []
 
 
+def test_disabled_terminal_cannot_be_opened_or_started(tmp_path: Path) -> None:
+    bridge, terminal_manager, worker_manager = build_bridge(tmp_path, ["one"])
+    profile = bridge.terminal_registry.get("one")
+    profile.enabled = False
+    bridge.terminal_registry.upsert(profile)
+
+    launch_response = json.loads(bridge.launchTerminal("one"))
+    terminal_manager.open_ids.add("one")
+    worker_response = json.loads(bridge.startWorker("one"))
+
+    assert launch_response["ok"] is False
+    assert worker_response["ok"] is False
+    assert terminal_manager.launched == []
+    assert worker_manager.started == []
+
+
 def test_close_selected_terminals_stops_only_requested_terminal(tmp_path: Path) -> None:
     bridge, terminal_manager, worker_manager = build_bridge(
         tmp_path, ["one", "two", "three"]
@@ -469,6 +544,38 @@ def test_close_selected_terminals_stops_only_requested_terminal(tmp_path: Path) 
     assert worker_manager.stopped == ["two"]
 
 
+def test_stop_terminal_distinguishes_close_failure_from_already_closed(tmp_path: Path) -> None:
+    bridge, terminal_manager, _ = build_bridge(tmp_path, ["one"])
+    terminal_manager.open_ids.add("one")
+    terminal_manager.failed_stop_ids.add("one")
+
+    response = json.loads(bridge.stopTerminal("one"))
+    terminal = json.loads(bridge.getTerminals())["data"][0]
+
+    assert response["ok"] is False
+    assert response["data"]["mt5_running"] is True
+    assert terminal["process_state"] == "close_failed"
+
+
+def test_late_worker_event_does_not_hide_terminal_close_failure(tmp_path: Path) -> None:
+    bridge, terminal_manager, worker_manager = build_bridge(tmp_path, ["one"])
+    terminal_manager.open_ids.add("one")
+    terminal_manager.failed_stop_ids.add("one")
+
+    bridge.stopTerminal("one")
+    worker_manager.events.append(
+        {
+            "terminal_id": "one",
+            "event": "stopped",
+            "data": {"state": "stopped", "alive": False, "connected": False},
+        }
+    )
+    terminal = json.loads(bridge.getTerminals())["data"][0]
+
+    assert terminal["running"] is True
+    assert terminal["process_state"] == "close_failed"
+
+
 def test_close_selected_reports_worker_that_resists_shutdown(tmp_path: Path) -> None:
     bridge, terminal_manager, worker_manager = build_bridge(tmp_path, ["one", "two"])
     terminal_manager.open_ids.update({"one", "two"})
@@ -480,7 +587,8 @@ def test_close_selected_reports_worker_that_resists_shutdown(tmp_path: Path) -> 
     assert response["ok"] is False
     assert "1 falha" in response["message"]
     assert worker_manager.running_ids == {"one"}
-    assert terminal_manager.open_ids == set()
+    assert terminal_manager.open_ids == {"one"}
+    assert terminal_manager.stopped == ["two"]
 
 
 def test_stop_worker_reports_resistant_process_as_failure(tmp_path: Path) -> None:
@@ -754,7 +862,8 @@ def test_stop_terminal_reports_worker_that_remains_alive(tmp_path: Path) -> None
 
     assert response["ok"] is False
     assert response["data"]["worker_running"] is True
-    assert terminal_manager.open_ids == set()
+    assert terminal_manager.open_ids == {"one"}
+    assert terminal_manager.stopped == []
     assert worker_manager.running_ids == {"one"}
 
 

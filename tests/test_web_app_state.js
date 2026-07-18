@@ -69,6 +69,47 @@ assert.equal(waitingWorkerActions.readingLabel, 'Parar tentativa');
 assert.equal(waitingWorkerActions.editBlocked, true);
 assert.equal(waitingWorkerActions.deleteBlocked, true);
 
+const openingActions = context.terminalActionState(
+  { id: 'opening', running: true, process_state: 'opening' },
+  { alive: true, connected: false },
+  1,
+  1,
+  3,
+);
+assert.equal(openingActions.openBlocked, true);
+assert.equal(openingActions.editBlocked, true);
+assert.equal(openingActions.deleteBlocked, true);
+assert.equal(openingActions.closeBlocked, false);
+
+const closingActions = context.terminalActionState(
+  { id: 'closing', running: true, process_state: 'closing' },
+  { alive: true, connected: false },
+  1,
+  1,
+  3,
+);
+assert.equal(closingActions.closeBlocked, true);
+
+const duplicateProcessActions = context.terminalActionState(
+  { id: 'duplicate', running: true, process_state: 'duplicate_process' },
+  { alive: false, connected: false },
+  1,
+  0,
+  3,
+);
+assert.equal(duplicateProcessActions.readingBlocked, true);
+assert.equal(duplicateProcessActions.closeBlocked, false);
+
+const disabledActions = context.terminalActionState(
+  { id: 'disabled', enabled: false, running: false, process_state: 'closed' },
+  { alive: false, connected: false },
+  0,
+  0,
+  3,
+);
+assert.equal(disabledActions.openBlocked, true);
+assert.equal(disabledActions.readingBlocked, true);
+
 const fullWorkerCapacityActions = context.terminalActionState(
   { id: 'four', running: false },
   { alive: false, connected: false },
@@ -83,17 +124,44 @@ assert.equal(context.workerLabel(''), 'desconectado');
 assert.equal(context.workerLabel('reopening_terminal'), 'reconectando');
 assert.equal(
   context.terminalProcessLabel(
-    { running: true, instance_status: { state: 'ready' } },
+    { running: true, process_state: 'reopening', instance_status: { state: 'ready' } },
     { state: 'reopening_terminal' },
   ),
   'Reabrindo MT5',
 );
 assert.equal(
   context.terminalProcessLabel(
-    { running: true, instance_status: { state: 'ready' } },
+    { running: true, process_state: 'open', instance_status: { state: 'ready' } },
     { state: 'reconnecting' },
   ),
-  'MT5 sem comunicação',
+  'MT5 aberto',
+);
+assert.equal(
+  context.terminalProcessLabel(
+    { running: true, process_state: 'opening', instance_status: { state: 'ready' } },
+    { state: 'starting' },
+  ),
+  'Abrindo MT5',
+);
+assert.equal(context.workerLabel('authentication_failed'), 'falha de autenticação');
+assert.equal(context.workerLabel('account_mismatch'), 'conta divergente');
+assert.equal(context.workerLabel('broker_disconnected'), 'corretora desconectada');
+assert.equal(context.workerLabel('worker_start_failed'), 'falha ao iniciar leitura');
+assert.equal(context.workerLabel('worker_crashed'), 'worker interrompido');
+assert.equal(context.workerLabel('stop_failed'), 'falha ao encerrar worker');
+assert.equal(
+  context.terminalProcessLabel(
+    { running: true, process_state: 'closing', instance_status: { state: 'ready' } },
+    { state: 'stopping' },
+  ),
+  'Fechando MT5',
+);
+assert.equal(
+  context.terminalProcessLabel(
+    { running: true, process_state: 'close_failed', instance_status: { state: 'ready' } },
+    { state: 'error' },
+  ),
+  'Falha ao fechar MT5',
 );
 assert.equal(
   context.terminalProcessLabel(
@@ -120,6 +188,7 @@ assert.equal(
 );
 const progressiveCloseSource = context.closeSelectedTerminals.toString();
 assert.match(progressiveCloseSource, /bridge\.stopTerminal\(terminalId\)/);
+assert.match(progressiveCloseSource, /setLocalProcessTransition\(terminalId, 'closing'\)/);
 assert.doesNotMatch(progressiveCloseSource, /bridge\.closeSelectedTerminals/);
 
 const closedBeyondCapacity = context.terminalBulkActionState(

@@ -72,6 +72,7 @@ class TerminalConnectionStatus:
     terminal_id: str
     ok: bool
     message: str
+    state: str = ""
     account_login: int | None = None
     server: str | None = None
     company: str | None = None

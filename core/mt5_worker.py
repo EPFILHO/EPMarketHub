@@ -14,6 +14,7 @@ import psutil
 from .market_snapshot import build_snapshot_from_connector, resolve_symbol_aliases
 from .models import SymbolDefinition, TerminalProfile
 from .mt5_connector import MT5Connector
+from .terminal_states import WorkerConnectionState, state_after_reconnect_attempts
 from .worker_protocol import WorkerEvent, now_iso, valid_worker_command
 
 logger = logging.getLogger(__name__)
@@ -80,7 +81,7 @@ def _emit_terminal_restart_required(
         profile.id,
         "terminal_restart_required",
         {
-            "state": "reopening_terminal",
+            "state": WorkerConnectionState.REOPENING_TERMINAL.value,
             "alive": True,
             "connected": False,
             "message": "Reabrindo MT5 de forma controlada e minimizada.",
@@ -149,7 +150,7 @@ def mt5_worker_main(
     next_snapshot = 0.0
     next_heartbeat = 0.0
     next_live_poll = 0.0
-    last_state = "starting"
+    last_state = WorkerConnectionState.STARTING.value
     last_message = "Worker iniciado; conectando ao MT5..."
     connection_meta: dict[str, Any] = {}
     available_symbol_states: dict[str, dict[str, Any]] = {}
@@ -163,7 +164,7 @@ def mt5_worker_main(
         profile.id,
         "started",
         {
-            "state": "starting",
+            "state": WorkerConnectionState.STARTING.value,
             "alive": True,
             "connected": False,
             "message": last_message,
@@ -257,7 +258,7 @@ def mt5_worker_main(
             if not connector.initialized and now >= next_connect:
                 if not _terminal_process_running(profile.terminal_exe):
                     reconnect_attempts += 1
-                    last_state = "reopening_terminal"
+                    last_state = WorkerConnectionState.REOPENING_TERMINAL.value
                     last_message = "MT5 fechado; aguardando reabertura controlada."
                     _emit_terminal_restart_required(event_queue, profile, reconnect_attempts)
                     next_connect = now + reconnect_seconds
@@ -266,7 +267,7 @@ def mt5_worker_main(
                     connection_meta = _status_payload(status)
                     if status.ok:
                         reconnect_attempts = 0
-                        last_state = "connected"
+                        last_state = WorkerConnectionState.CONNECTED.value
                         last_message = status.message
                         next_snapshot = 0.0
                         next_live_poll = 0.0
@@ -279,7 +280,7 @@ def mt5_worker_main(
                             "status",
                             {
                                 **connection_meta,
-                                "state": "connected",
+                                "state": WorkerConnectionState.CONNECTED.value,
                                 "alive": True,
                                 "connected": True,
                                 "pid": os.getpid(),
@@ -290,8 +291,11 @@ def mt5_worker_main(
                         reconnect_attempts += 1
                         connector.shutdown()
                         next_connect = now + reconnect_seconds
-                        waiting_login = "sem conta logada" in status.message.lower()
-                        last_state = "waiting_login" if waiting_login else "reconnecting"
+                        reported_state = status.state or WorkerConnectionState.RECONNECTING.value
+                        last_state = state_after_reconnect_attempts(
+                            reported_state,
+                            reconnect_attempts,
+                        )
                         last_message = status.message
                         _emit(
                             event_queue,
@@ -312,7 +316,13 @@ def mt5_worker_main(
                 connection_meta = _status_payload(current_status)
                 if not current_status.ok:
                     reconnect_attempts += 1
-                    last_state = "reconnecting"
+                    reported_state = (
+                        current_status.state or WorkerConnectionState.RECONNECTING.value
+                    )
+                    last_state = state_after_reconnect_attempts(
+                        reported_state,
+                        reconnect_attempts,
+                    )
                     last_message = current_status.message
                     connector.shutdown()
                     available_symbol_states.clear()
@@ -326,7 +336,7 @@ def mt5_worker_main(
                             "status",
                             {
                                 **connection_meta,
-                                "state": "reconnecting",
+                                "state": last_state,
                                 "alive": True,
                                 "connected": False,
                                 "pid": os.getpid(),
@@ -334,7 +344,7 @@ def mt5_worker_main(
                             },
                         )
                     else:
-                        last_state = "reopening_terminal"
+                        last_state = WorkerConnectionState.REOPENING_TERMINAL.value
                         last_message = "MT5 fechado; aguardando reabertura controlada."
                         _emit_terminal_restart_required(event_queue, profile, reconnect_attempts)
                 else:
@@ -429,7 +439,11 @@ def mt5_worker_main(
                     profile.id,
                     "heartbeat",
                     {
-                        "state": "connected" if status and status.ok else last_state,
+                        "state": (
+                            WorkerConnectionState.CONNECTED.value
+                            if status and status.ok
+                            else last_state
+                        ),
                         "alive": True,
                         "connected": bool(status and status.ok),
                         "message": status.message if status else last_message,
@@ -448,7 +462,7 @@ def mt5_worker_main(
             profile.id,
             "error",
             {
-                "state": "error",
+                "state": WorkerConnectionState.WORKER_CRASHED.value,
                 "alive": False,
                 "connected": False,
                 "message": f"Worker interrompido: {exc}",
@@ -463,7 +477,7 @@ def mt5_worker_main(
             profile.id,
             "stopped",
             {
-                "state": "stopped",
+                "state": WorkerConnectionState.STOPPED.value,
                 "alive": False,
                 "connected": False,
                 "message": "Desconectado.",
