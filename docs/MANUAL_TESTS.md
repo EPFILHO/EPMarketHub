@@ -79,9 +79,10 @@
 7. Inicie novamente o aplicativo e confirme que cadastros, caminhos relativos e aliases continuam preservados.
 8. Confirme que não existe opção na interface nem arquivo em `user_data` para o usuário alterar o limite simultâneo.
 9. Com uma leitura conectada, feche diretamente a janela daquele MT5 pelo **X**.
-10. Confirme primeiro **Reabrindo MT5** e depois que o kernel reabre a mesma instância uma única vez, minimizada, e que o worker volta a conectar.
-11. Selecione dois ou três MT5 abertos e clique em **Fechar selecionados**.
-12. Confirme que o texto do botão mostra o progresso e que cada card muda para **MT5 fechado / Desconectado** assim que seu próprio fechamento termina, sem esperar o último.
+10. Confirme a sequência coerente **MT5 sem comunicação / Reconectando**, depois **Reabrindo MT5 / Reconectando**, sem exibir **MT5 aberto / Reconectando** após a ausência do processo já ter sido detectada.
+11. Confirme que o kernel reabre a mesma instância uma única vez, minimizada, e que os badges voltam a **MT5 aberto / Conectado**.
+12. Selecione dois ou três MT5 abertos e clique em **Fechar selecionados**.
+13. Confirme que o texto do botão mostra o progresso e que cada card muda para **MT5 fechado / Desconectado** assim que seu próprio fechamento termina, sem esperar o último.
 
 ## Reconciliação de instância local
 
@@ -92,6 +93,13 @@ Use apenas um cadastro descartável, com MT5 e worker fechados.
 3. Abra **Resolver**, cancele, devolva a pasta ao caminho original e confirme que **Atualizar** restaura o estado **MT5 fechado**.
 4. Mova novamente a pasta e escolha **Recriar instância**; confirme a cópia limpa de `terminal64.exe` e a orientação para login manual.
 5. Em outro cadastro descartável ausente, escolha **Remover cadastro** e confirme que ele sai da lista sem qualquer tentativa de apagar ou restaurar pastas externas.
+6. Em outro cadastro descartável, abra o modal normal **Excluir**, digite `EXCLUIR`, remova a pasta por fora e então confirme; o cadastro deve ser removido diretamente, sem abrir **Resolver**.
+7. Com a pasta ausente, tente salvar pelo modal **Editar**; ele deve fechar e abrir **Resolver**, exibindo a orientação uma única vez e sem remover o cadastro.
+8. Remova somente o cadastro e recupere a pasta original da Lixeira para o caminho esperado.
+9. Tente cadastrar novamente a mesma corretora e conta e confirme o modal **Pasta existente não cadastrada**.
+10. Escolha **Usar pasta existente** e confirme que o cadastro reaparece, os arquivos da pasta permanecem intactos e nenhum MT5 é aberto automaticamente.
+11. Repita a adoção deixando o `terminal64.exe` daquela pasta aberto; confirme que a operação é bloqueada até o MT5 ser fechado.
+12. Em uma pasta órfã sem `terminal64.exe`, confirme que a adoção repara somente o executável a partir de `MT5/terminal64.exe` e preserva os demais arquivos.
 
 Falhas artificiais de fila cheia/fechada, processo resistente, evento de PID antigo e promoção interrompida de JSON são cobertas por fakes na suíte automatizada. Não devem ser provocadas encerrando processos reais à força durante uma sessão autenticada.
 

@@ -106,7 +106,10 @@
 - MT5 fechado diretamente é relançado pelo kernel em modo portátil e minimizado, sem duplicar a instância.
 - Estado transitório **Reabrindo MT5** diferencia processo relançado de conexão já restabelecida.
 - Instâncias removidas externamente podem ser recriadas a partir da base ou ter somente o cadastro local removido.
+- Exclusão já confirmada remove diretamente o cadastro de uma instância ausente, sem repetir a decisão no fluxo de resolução.
+- Pastas órfãs recuperadas fora do aplicativo podem ser adotadas explicitamente, preservando seus arquivos e sem sobrescrita automática.
 - Pasta ausente interrompe o worker correspondente para evitar tentativas e logs repetidos.
+- Falhas IPC são diferenciadas da ausência de login e atualizam imediatamente os estados **MT5 sem comunicação / Reconectando** antes da reabertura.
 - Todos os consumidores da fila passam pelo mesmo despachante, impedindo uma atualização da tela de descartar eventos de relançamento.
 - Fechamento dos terminais selecionados atualiza cada card conforme sua operação termina.
 - Estado visual de worker parado passa a ser apresentado como **Desconectado**.

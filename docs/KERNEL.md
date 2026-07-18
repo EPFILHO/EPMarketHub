@@ -94,8 +94,10 @@ significa esconder a falha nem afirmar sucesso sem confirmar o resultado.
 Cada cadastro também expõe a integridade local `ready`, `directory_missing`,
 `executable_missing` ou `invalid_path`. Uma instância indisponível não pode ser
 aberta, editada nem selecionada em lote. O usuário pode recriar o executável a
-partir da instalação-modelo ou remover somente o cadastro; o kernel não tenta
-manipular automaticamente a Lixeira do Windows.
+partir da instalação-modelo ou remover somente o cadastro. Se uma pasta reaparecer
+sem cadastro, o kernel exige adoção explícita, preserva seu conteúdo e bloqueia a
+operação enquanto o executável estiver aberto. O kernel não tenta manipular
+automaticamente a Lixeira do Windows nem sobrescreve uma pasta órfã.
 
 ## Regra de evolução
 

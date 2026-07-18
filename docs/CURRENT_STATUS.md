@@ -27,6 +27,9 @@ A 0.4.10 fecha o primeiro ciclo de hardening do kernel construído sobre a basel
 - Fechamento externo do MT5 solicita reabertura controlada, portátil e minimizada ao processo principal.
 - A transição é apresentada como **Reabrindo MT5** até conectar ou aguardar login.
 - Pasta ou executável removido externamente produz diagnóstico explícito e permite recriar a instância ou remover somente o cadastro.
+- Exclusão confirmada de cadastro sem pasta conclui a remoção diretamente; a tela de edição nunca remove cadastro e encaminha a inconsistência ao fluxo **Resolver**.
+- Uma pasta existente sem cadastro é tratada como órfã e só pode ser adotada por ação explícita, sem apagar a sessão local nem sobrescrever seus arquivos.
+- Perda de comunicação IPC é distinta de ausência de login e atualiza os badges de processo e worker durante a transição.
 - Fechamento em lote é apresentado progressivamente e worker parado aparece como **Desconectado**.
 - A instalação de teste é atualizada apenas por `scripts/sync_test_copy.ps1`, sem operações Git nem cópia de dados locais.
 
@@ -35,7 +38,8 @@ A 0.4.10 fecha o primeiro ciclo de hardening do kernel construído sobre a basel
 - A 0.4.9 foi validada manualmente no Windows com MT5 reais em 17 de julho de 2026.
 - A 0.4.10 passa pela suíte automatizada multiplataforma e pelos testes de regras JavaScript.
 - Ciclo de cadastro, exclusão, relançamento simultâneo de três MT5 e fluxos foi validado manualmente em 18 de julho de 2026.
-- A reconciliação visual de instância ausente permanece pendente de validação manual antes de integrar a versão.
+- Os fluxos iniciais de reconciliação de instância ausente foram validados manualmente em 18 de julho de 2026.
+- A adoção de pasta órfã e a reconciliação visual final de perda IPC permanecem pendentes de validação manual antes de integrar a versão.
 
 ## Fora do kernel e limitações conhecidas
 

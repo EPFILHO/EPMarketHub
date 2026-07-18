@@ -83,8 +83,10 @@ ativo:
 4. a detecção por caminho completo impede abrir uma segunda cópia;
 5. no ciclo de reconexão já existente, o worker conecta novamente ao mesmo MT5.
 
-Durante esse intervalo, o estado é `reopening_terminal` e a interface apresenta
-**Reabrindo MT5**. Se a pasta ou o executável tiver desaparecido, a bridge
+Uma falha IPC com o processo ainda detectável é apresentada como **MT5 sem
+comunicação / Reconectando**. Quando a ausência do processo é confirmada, o estado
+passa a `reopening_terminal` e a interface apresenta **Reabrindo MT5 /
+Reconectando**. Se a pasta ou o executável tiver desaparecido, a bridge
 encerra o worker e exige reconciliação explícita, evitando tentativas e logs
 repetidos.
 
