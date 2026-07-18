@@ -10,7 +10,7 @@ Use estas instruções ao trabalhar neste repositório.
 - Leitura de dados por meio da biblioteca Python `MetaTrader5`.
 - Cada terminal MT5 ativo usa um processo worker persistente próprio.
 - O processo principal não deve alternar conexões MT5 diretamente.
-- O limite atual é de 3 terminais MT5 ativos simultaneamente.
+- O limite simultâneo é uma política de produto centralizada em `core/config.py`; o valor atual é 3.
 - Cadastros de terminais podem ser vários.
 - A instalação-modelo fica em `MT5/terminal64.exe`.
 - As instâncias isoladas ficam em `user_data/mt5_instances/`.

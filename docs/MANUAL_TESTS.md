@@ -4,16 +4,16 @@
 
 1. Copie `terminal64.exe` para `MT5/terminal64.exe`.
 2. Rode `python app.py`.
-3. Cadastre pelo menos 3 terminais, por exemplo Forex A, Forex B e B3.
+3. Consulte `MAX_ACTIVE_TERMINALS` em `core/config.py` (valor de produção atual: 3) e cadastre pelo menos essa quantidade de terminais.
 4. Faça login manual em cada MT5 criado.
 
 ## Roteiro principal
 
-1. Marque até 3 terminais na tela **Terminais MT5**.
+1. Marque até o limite atual de terminais na tela **Terminais MT5**.
 2. Clique em **Abrir selecionados**.
 3. Confirme que todos abrem e que as leituras entram em estado conectado.
 4. Vá ao Dashboard.
-5. Configure 3 fluxos, cada um em um terminal diferente.
+5. Com a política atual em 3, configure 3 fluxos, cada um em um terminal diferente.
 6. Clique em **Iniciar 3 fluxos**.
 7. Confirme que aparecem 3 PIDs diferentes e que leituras/ticks avançam.
 8. Clique em **Parar teste**.
@@ -54,7 +54,7 @@
 
 ## Capacidade e ações dos terminais
 
-1. Com 3 MT5 abertos, selecione-os e confirme que **Abrir selecionados** permanece desativado.
+1. Com a capacidade atual totalmente ocupada, selecione os MT5 abertos e confirme que **Abrir selecionados** permanece desativado.
 2. Confirme que **Fechar selecionados** permanece habilitado para os terminais abertos selecionados.
 3. Feche um MT5, selecione exatamente um terminal fechado e confirme que **Abrir selecionados** volta a ser habilitado.
 4. Confirme que os cards não exibem mais o botão **Snapshot**.
@@ -67,6 +67,19 @@
 3. Clique em **Excluir**.
 4. Digite `EXCLUIR`.
 5. Confirme que cadastro e pasta local foram removidos.
+
+## Fechamento do kernel 0.4.10
+
+1. Abra e conecte a quantidade máxima atual de MT5 e confirme um PID Python distinto por terminal.
+2. Pare apenas a leitura do terminal intermediário e confirme que os demais continuam conectados e atualizando.
+3. Reinicie a leitura parada e confirme que ela recebe um novo PID sem alterar os outros workers.
+4. Feche manualmente um dos MT5 enquanto seu worker está conectado e confirme que o estado deixa de ser conectado sem contaminar os demais cards.
+5. Reabra esse MT5 pela interface e confirme a restauração da leitura e dos fluxos anteriormente configurados para ele.
+6. Clique repetidamente em **Parar leituras** e depois feche o aplicativo; confirme que não surge erro e que nenhum MT5 controlado permanece aberto.
+7. Inicie novamente o aplicativo e confirme que cadastros, caminhos relativos e aliases continuam preservados.
+8. Confirme que não existe opção na interface nem arquivo em `user_data` para o usuário alterar o limite simultâneo.
+
+Falhas artificiais de fila cheia/fechada, processo resistente, evento de PID antigo e promoção interrompida de JSON são cobertas por fakes na suíte automatizada. Não devem ser provocadas encerrando processos reais à força durante uma sessão autenticada.
 
 ## Símbolos Cash
 

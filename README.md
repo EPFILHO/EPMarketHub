@@ -1,10 +1,10 @@
-# EP Market Hub — Base 0.4.9
+# EP Market Hub — Kernel 0.4.10
 
 Aplicativo desktop local para organizar instâncias controladas do MetaTrader 5 e ler dados de mercado por meio da biblioteca Python `MetaTrader5`.
 
-Esta versão continua o endurecimento da baseline funcional 0.4.7 sem introduzir funcionalidades novas. Ela corrige o estado de ações globais, bloqueia a edição de terminais ativos e melhora a recuperação de falhas ao cadastrar ou editar terminais fechados. A parte mais importante do projeto permanece preservada: até 3 terminais MT5 podem ficar abertos e conectados ao mesmo tempo, cada um em um processo Python independente.
+Esta versão fecha o primeiro ciclo de endurecimento do kernel sem introduzir módulos de negócio novos. O ciclo de vida de processos, filas, persistência local e encerramento passa a falhar de forma explícita e recuperável. A parte principal permanece preservada: cada terminal MT5 ativo mantém uma conexão em seu próprio processo Python independente.
 
-A baseline 0.4.9 foi validada manualmente no Windows em 17 de julho de 2026 com instâncias MT5 reais e conexões simultâneas, além das verificações automatizadas descritas na documentação.
+A baseline 0.4.9 foi validada manualmente no Windows em 17 de julho de 2026 com instâncias MT5 reais e conexões simultâneas. O hardening 0.4.10 possui validação automatizada; sua rodada manual final com MT5 real está descrita em `docs/MANUAL_TESTS.md`.
 
 ## Estado da base
 
@@ -14,7 +14,7 @@ Funciona hoje:
 - Uso de uma instalação-modelo local em `MT5/terminal64.exe`.
 - Login feito manualmente pelo usuário no próprio MT5.
 - Um worker/processo persistente por terminal conectado.
-- Limite de 3 terminais ativos simultaneamente; cadastros podem ser vários.
+- Limite simultâneo definido somente pela política interna `MAX_ACTIVE_TERMINALS` (atualmente `3`); não é uma preferência do usuário e os cadastros continuam ilimitados.
 - Seleção explícita dos terminais que serão abertos.
 - Edição e exclusão de cadastros pela interface.
 - Dashboard mostrando apenas terminais conectados.
@@ -78,7 +78,7 @@ core/                   Regras de negócio, MT5, workers e persistência.
 gui/                    Janela PySide6 e ponte Python ↔ JavaScript.
 web/                    Interface HTML/CSS/JS carregada no QWebEngineView.
 docs/                   Documentação atual para manutenção e Codex.
-tests/                  Testes automatizados básicos.
+tests/                  Caracterização automatizada do kernel e da interface de estado.
 MT5/                    Pasta da instalação-modelo; recebe terminal64.exe local.
 user_data/              Dados locais e instâncias isoladas.
 ```
@@ -87,6 +87,7 @@ user_data/              Dados locais e instâncias isoladas.
 
 - `AGENTS.md`: regras para agentes/Codex trabalharem neste repositório.
 - `docs/ARCHITECTURE.md`: arquitetura atual.
+- `docs/KERNEL.md`: fronteiras, invariantes e modelo de falhas do kernel.
 - `docs/BASELINE_AUDIT_0.4.7.md`: auditoria técnica da baseline validada.
 - `docs/CURRENT_STATUS.md`: o que funciona e o que ainda falta.
 - `docs/MANUAL_TESTS.md`: roteiro atual de testes manuais.

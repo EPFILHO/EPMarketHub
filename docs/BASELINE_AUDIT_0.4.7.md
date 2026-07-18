@@ -99,23 +99,23 @@ O supervisor impede worker duplicado para o mesmo terminal ou executável e limi
 | `web/app.js` concentra estado, renderização, eventos e comunicação. | Pendente; divisão exige aprovação e caracterização prévia. |
 | Não há mapeamento de símbolo por terminal nem gestão automática de vencimentos B3. | Pendente no roadmap. |
 
-## Reconciliação do relatório integral após a 0.4.9
+## Reconciliação do relatório integral após a 0.4.10
 
 Esta tabela preserva os demais achados do relatório original sem apresentá-los como se ainda descrevessem integralmente o estado atual.
 
-| Achado original | Estado em 0.4.9 |
+| Achado original | Estado em 0.4.10 |
 |---|---|
 | Ausência de `.gitignore` e JSONs reais rastreados. | Resolvido na 0.4.8; runtime, executáveis, logs e sessões estão protegidos e os exemplos seguros continuam versionados. |
-| Apenas 7 testes e 26 ocorrências Ruff. | Evoluiu para 28 testes Python, testes de regras de estado em Node, compilação limpa e Ruff limpo. |
+| Apenas 7 testes e 26 ocorrências Ruff. | Evoluiu para mais de 60 testes Python, testes de regras de estado em Node, compilação limpa e Ruff limpo. |
 | Criação podia deixar pasta órfã se o cadastro falhasse. | Resolvido com rollback controlado na 0.4.9. |
 | Edição informava sucesso sem confirmar restauração do worker. | O fluxo arriscado foi eliminado: edição exige MT5 fechado e worker parado. |
 | Caminhos absolutos prendiam o cadastro ao local anterior. | Resolvido com persistência relativa e migração automática. |
 | Estado dos botões podia divergir do limite e dos workers. | Corrigido na 0.4.9 e coberto por testes de regras JavaScript; teste completo de DOM/QWebEngine continua pendente. |
-| Shutdown síncrono pode bloquear a interface em falhas resistentes. | Pendente de medição e caracterização antes de qualquer mudança de temporização. |
+| Shutdown síncrono pode bloquear a interface em falhas resistentes. | Caracterizado com encerramento escalonado e falha explícita na 0.4.10; medição real continua necessária antes de mudar temporizações. |
 | Polling de conexão pode ser excessivo. | Mantido intencionalmente durante o hardening; otimização depende de medição e nova validação com MT5 real. |
-| Eventos podem ser descartados quando a fila compartilhada enche. | Pendente; faltam prioridade, coalescimento e teste de fila cheia. |
+| Eventos podem ser descartados quando a fila compartilhada enche. | Caracterizado na 0.4.10: eventos volumosos são descartáveis, eventos críticos recebem espera limitada e morte sem evento é detectada pelo supervisor. Coalescimento permanece uma otimização futura. |
 | Protocolo usa dicionários sem versão ou validação formal. | Pendente; contratos de payload devem ser caracterizados antes da refatoração 0.5. |
-| JSON inválido volta ao padrão sem quarentena ou recuperação explícita. | Pendente para testes de corrupção e permissão negada. |
+| JSON inválido volta ao padrão sem quarentena ou recuperação explícita. | Resolvido na 0.4.10 com quarentena, escrita atômica e propagação de falha de acesso. |
 | `MarketHubBridge` e `web/app.js` concentram responsabilidades. | Pendente para a 0.5, condicionado à aprovação e a testes prévios. |
 | Há caminhos preliminares ou não integrados em `analytics.py`, `get_rates()` e `MarketSnapshotService`. | Pendente de decisão: integrar futuramente ou remover somente após comprovar ausência de consumidores. |
 | Não existe CI nem verificação estática de tipos. | Ruff está limpo localmente; CI e mypy/pyright continuam pendentes. |
@@ -125,7 +125,7 @@ Também permanecem válidas as divergências de que `app.py` usa o modo local de
 ## Riscos de regressão
 
 - Iniciar dois workers para o mesmo terminal ou executável.
-- Ultrapassar três MT5/workers por caminhos individuais, em lote ou pelo Dashboard.
+- Ultrapassar a política central de MT5/workers por caminhos individuais, em lote ou pelo Dashboard.
 - Fechar ou parar um terminal e afetar os demais.
 - Renomear uma pasta enquanto o MT5 ainda usa seus arquivos.
 - Salvar cadastro apontando para uma pasta inexistente ou deixar pasta sem cadastro.
@@ -145,10 +145,10 @@ Também permanecem válidas as divergências de que `app.py` usa o modo local de
 - Matriz de transições terminal fechado/aberto versus worker parado/iniciando/conectado/erro.
 - Contratos completos dos payloads emitidos por `MarketHubBridge` e consumidos pelo JavaScript.
 - Estado das ações globais e individuais em testes de DOM JavaScript.
-- Falhas de `launch`, fechamento, renomeação e filas cheias.
-- Eventos atrasados ou fora de ordem sem alterar as temporizações atuais.
-- Shutdown com worker que exige término forçado.
-- Corrupção, permissão negada e recuperação dos arquivos JSON.
+- Integração do DOM real com QWebEngine/QWebChannel para complementar as regras JavaScript puras.
+- Eventos semanticamente fora de ordem que compartilham o mesmo PID.
+- Falha real do Windows ao encerrar um processo protegido ou travado.
+- Recuperação orientada ao usuário a partir de um JSON em quarentena.
 - Casos de resolução com metadados incompletos ou símbolos homônimos.
 
 ## Testes que dependem de Windows e MT5 real
@@ -166,7 +166,7 @@ Também permanecem válidas as divergências de que `app.py` usa o modo local de
 
 1. **0.4.8 — higiene e caracterização básica:** proteger dados locais, ampliar fakes e zerar Ruff. Concluído.
 2. **0.4.9 — confiabilidade localizada:** alinhar ações globais, bloquear edição ativa e compensar falhas parciais. Concluído nesta branch.
-3. **Caracterização de estados:** cobrir transições e contratos de payload/DOM sem mudar arquitetura.
+3. **0.4.10 — fechamento do kernel:** centralizar a capacidade, caracterizar processos, filas, shutdown e persistência recuperável. Implementado; validação manual final pendente.
 4. **Primeira extração da bridge:** somente após aprovação, mover um caso de uso sem alterar slots nem payloads.
 5. **Primeira extração do JavaScript:** somente após aprovação, separar estado/renderização preservando eventos e aparência.
 6. **Símbolos por terminal:** projetar persistência e UI para aprovação antes da implementação.
@@ -176,4 +176,8 @@ Cada etapa deve permanecer pequena, verificável, reversível e validada no Wind
 
 ## Fechamento da 0.4.9
 
-Em 17 de julho de 2026, a 0.4.9 foi novamente validada manualmente no Windows com instâncias MT5 reais, incluindo conexões simultâneas, edição com terminal fechado, portabilidade dos caminhos, ações em lote e coerência dos fluxos no Dashboard. Essa validação não substitui os testes pendentes de falha resistente, fila cheia, corrupção JSON e DOM/QWebEngine automatizado.
+Em 17 de julho de 2026, a 0.4.9 foi novamente validada manualmente no Windows com instâncias MT5 reais, incluindo conexões simultâneas, edição com terminal fechado, portabilidade dos caminhos, ações em lote e coerência dos fluxos no Dashboard. Naquele fechamento ainda faltavam caracterizações de falha resistente, filas e corrupção JSON, incorporadas posteriormente à 0.4.10; DOM/QWebEngine automatizado continua pendente.
+
+## Fechamento automatizado da 0.4.10
+
+Em 18 de julho de 2026, o hardening passou a cobrir com fakes processos resistentes, filas cheias e fechadas, eventos residuais, morte inesperada e corrupção/promoção de JSON. O teste completo de DOM/QWebEngine e a rodada operacional com MT5 reais continuam manuais.

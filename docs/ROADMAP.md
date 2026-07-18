@@ -5,21 +5,22 @@
 - Numerar os MT5 conforme a ordem alfabética exibida, renumerando-os quando o cadastro ou a ordenação mudar.
 - Reutilizar o número no badge da interface e, após validação técnica no Windows, no ícone da instância portátil.
 - Adicionar splashscreen coerente com a identidade do EP Market Hub durante o carregamento do QWebEngineView.
-- Implementar numeração e splash somente após aprovação de escopo e conclusão da baseline 0.4.9.
+- Implementar numeração e splash somente após aprovação de escopo e validação final do kernel 0.4.10.
 
-## Próxima etapa — caracterização de estados antes da 0.5
+## 0.4.10 — fechamento do kernel
 
-- Cobrir transições terminal fechado/aberto e worker parado/iniciando/conectado/erro.
-- Testar os payloads que determinam a disponibilidade das ações globais e individuais.
-- Caracterizar falhas de abertura, fechamento, fila e encerramento antes de mover responsabilidades.
-- Manter timers, polling e protocolo atuais durante essa etapa.
+- Formalizar fronteiras, invariantes, estados e falhas do kernel.
+- Centralizar a política interna de capacidade e testá-la com valores 2, 3 e 4.
+- Caracterizar criação, morte, filas e encerramento resistente de workers.
+- Endurecer persistência atômica e recuperação de JSON inválido.
+- Validar manualmente no Windows com MT5 reais antes da integração.
 
-## 0.5 — Refatoração sem mudança funcional
+## 0.5 — camada de plataforma sem mudança funcional do kernel
 
-- Dividir `gui/main_window.py` em componentes menores.
-- Dividir `web/app.js` por responsabilidade.
-- Fortalecer testes unitários.
-- Registrar estados e erros de worker de forma mais clara.
+- Apresentar para aprovação a divisão de `gui/main_window.py` e `web/app.js` por responsabilidade.
+- Separar consumidores da interface dos contratos descritos em `docs/KERNEL.md`.
+- Preservar timers, polling, filas e protocolo até que cada substituição tenha caracterização equivalente.
+- Tratar Dashboard e Ativos como módulos substituíveis sobre o kernel estável.
 
 ## 0.6 — Mapeamento de símbolos por terminal
 

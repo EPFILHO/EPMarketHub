@@ -90,3 +90,16 @@
 - Erros de edição ficam visíveis dentro do modal e em toast acima dos diálogos.
 - Testes automatizados para as novas condições de falha sem abrir MT5 real.
 - Baseline 0.4.9 validada manualmente no Windows com MT5 reais e conexões simultâneas em 17 de julho de 2026.
+
+## 0.4.10
+
+- Fechamento do primeiro ciclo de endurecimento do kernel, sem novos módulos de negócio.
+- Limite simultâneo centralizado em `MAX_ACTIVE_TERMINALS`, como política interna do produto e sem configuração pelo usuário.
+- Caracterização automatizada da capacidade com valores 2, 3 e 4, mantendo o valor de produção atual em 3.
+- Encerramento de workers com confirmação real, escalonamento gracioso para `terminate()` e `kill()` e falha explícita quando o processo resiste.
+- Filas fechadas, cheias ou congestionadas tratadas sem declarar sucesso falso nem travar o shutdown.
+- Eventos residuais de PIDs anteriores descartados antes de alcançar a bridge.
+- Falhas de escrita JSON preservam o último arquivo válido; conteúdo vazio ou inválido é movido para quarentena recuperável.
+- Abertura, edição, exclusão e ações em lote passam a considerar tanto o processo MT5 quanto o worker ativo.
+- Fronteiras, invariantes, estados e modelo de falhas registrados em `docs/KERNEL.md`.
+- Validação automatizada concluída; validação manual final da 0.4.10 com MT5 real permanece pendente.
