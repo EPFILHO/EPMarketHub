@@ -44,6 +44,7 @@ Thumbs.db
 # Runtime registries (version only their *.example.json counterparts)
 /user_data/terminals.json
 /user_data/symbols.json
+/user_data/*.corrupt-*
 
 # Qt / Qt WebEngine local profiles and caches
 /user_data/QtWebEngine/
