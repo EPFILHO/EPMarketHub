@@ -28,6 +28,7 @@ from core.symbol_registry import SymbolRegistry
 from core.terminal_manager import TerminalManager
 from core.terminal_registry import TerminalRegistry
 from core.terminal_states import (
+    IPC_ATTACHED_STATES,
     InstanceIntegrityState,
     ProcessState,
     TerminalProcessStateMachine,
@@ -669,8 +670,10 @@ class MarketHubBridge(QObject):
             elif event_type in {"status", "heartbeat", "error", "stopped"}:
                 if worker_state == WorkerConnectionState.REOPENING_TERMINAL.value:
                     self.process_states.set(terminal_id, ProcessState.REOPENING)
-                elif worker_state != WorkerConnectionState.STARTING.value:
+                elif worker_state in IPC_ATTACHED_STATES:
                     self.process_states.complete_startup(terminal_id)
+                elif worker_state != WorkerConnectionState.STARTING.value:
+                    self.process_states.complete_opening(terminal_id)
                 if event_type in {"status", "error", "stopped"}:
                     should_emit_terminals = True
             if event_type == "snapshot" and isinstance(data.get("snapshot"), dict):
@@ -707,12 +710,18 @@ class MarketHubBridge(QObject):
                         )
                     else:
                         try:
-                            self.terminal_manager.launch(profile, minimized=True)
+                            launched = self.terminal_manager.launch(profile, minimized=True)
                             should_emit_terminals = True
-                            logger.info(
-                                "MT5 %s reaberto minimizado após fechamento externo.",
-                                terminal_id,
-                            )
+                            if launched is None:
+                                logger.info(
+                                    "Reabertura do MT5 %s aguardando processo ainda detectado.",
+                                    terminal_id,
+                                )
+                            else:
+                                logger.info(
+                                    "Reabertura minimizada do MT5 %s iniciada após fechamento externo.",
+                                    terminal_id,
+                                )
                         except Exception:
                             self.process_states.set(terminal_id, ProcessState.LAUNCH_FAILED)
                             logger.exception(

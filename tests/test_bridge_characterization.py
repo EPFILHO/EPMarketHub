@@ -195,12 +195,13 @@ class FakeTerminalManager:
     def running_count(self, profiles) -> int:
         return sum(profile.id in self.open_ids for profile in profiles)
 
-    def launch(self, profile: TerminalProfile, minimized: bool = True) -> None:
+    def launch(self, profile: TerminalProfile, minimized: bool = True):
         self.launched.append(profile.id)
         self.launch_minimized.append(minimized)
         if profile.id in self.failed_launch_ids:
             raise OSError("falha simulada ao abrir terminal")
         self.open_ids.add(profile.id)
+        return object()
 
     def stop(self, terminal_id: str, profile=None) -> bool:
         self.stopped.append(terminal_id)
@@ -455,6 +456,103 @@ def test_worker_restart_request_reopens_terminal_minimized_once(tmp_path: Path) 
     bridge.poll_worker_events()
 
     assert terminal_manager.launched == ["one"]
+
+
+def test_reconnecting_heartbeat_does_not_turn_reopening_into_duplicate(
+    tmp_path: Path,
+) -> None:
+    bridge, terminal_manager, worker_manager = build_bridge(tmp_path, ["one"])
+    worker_manager.running_ids.add("one")
+    worker_manager.events.append(
+        {
+            "terminal_id": "one",
+            "event": "terminal_restart_required",
+            "data": {
+                "state": "reopening_terminal",
+                "alive": True,
+                "connected": False,
+            },
+        }
+    )
+    bridge.poll_worker_events()
+    terminal_manager.process_counts["one"] = 2
+    worker_manager.events.append(
+        {
+            "terminal_id": "one",
+            "event": "heartbeat",
+            "data": {"state": "reconnecting", "alive": True, "connected": False},
+        }
+    )
+
+    bridge.poll_worker_events()
+    terminal = json.loads(bridge.getTerminals())["data"][0]
+
+    assert terminal["process_state"] == "reopening"
+
+
+def test_broker_disconnected_status_confirms_reopened_mt5_process(tmp_path: Path) -> None:
+    bridge, _, worker_manager = build_bridge(tmp_path, ["one"])
+    worker_manager.running_ids.add("one")
+    worker_manager.events.extend(
+        [
+            {
+                "terminal_id": "one",
+                "event": "terminal_restart_required",
+                "data": {
+                    "state": "reopening_terminal",
+                    "alive": True,
+                    "connected": False,
+                },
+            },
+            {
+                "terminal_id": "one",
+                "event": "status",
+                "data": {
+                    "state": "broker_disconnected",
+                    "alive": True,
+                    "connected": False,
+                },
+            },
+        ]
+    )
+
+    bridge.poll_worker_events()
+    terminal = json.loads(bridge.getTerminals())["data"][0]
+
+    assert terminal["process_state"] == "open"
+
+
+def test_each_external_close_reopens_mt5_again_while_reading_is_active(
+    tmp_path: Path,
+) -> None:
+    bridge, terminal_manager, worker_manager = build_bridge(tmp_path, ["one"])
+    worker_manager.running_ids.add("one")
+    restart_event = {
+        "terminal_id": "one",
+        "event": "terminal_restart_required",
+        "data": {
+            "state": "reopening_terminal",
+            "alive": True,
+            "connected": False,
+        },
+    }
+
+    worker_manager.events.append(restart_event)
+    bridge.poll_worker_events()
+    worker_manager.events.append(
+        {
+            "terminal_id": "one",
+            "event": "status",
+            "data": {"state": "connected", "alive": True, "connected": True},
+        }
+    )
+    bridge.poll_worker_events()
+    terminal_manager.open_ids.discard("one")
+    worker_manager.events.append(restart_event)
+    bridge.poll_worker_events()
+
+    assert terminal_manager.launched == ["one", "one"]
+    assert terminal_manager.launch_minimized == [True, True]
 
 
 def test_worker_restart_stops_when_instance_disappeared(tmp_path: Path) -> None:
