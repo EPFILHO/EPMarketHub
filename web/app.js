@@ -12,6 +12,9 @@ const SELECTED_TERMINALS_KEY = 'ep_market_hub_selected_terminals_v1';
 let selectedTerminalIds = new Set();
 let bulkOpenInProgress = false;
 let bulkCloseInProgress = false;
+let lifecycleInProgress = false;
+const pendingLifecycleOperations = new Map();
+const completedLifecycleOperations = new Map();
 let pendingOrphanCandidate = null;
 
 const LIVE_SLOT_IDS = ['live-1', 'live-2', 'live-3'];
@@ -110,6 +113,96 @@ function toast(message, isError = false) {
   el.textContent = message;
   el.className = `toast ${isError ? 'error' : ''}`;
   setTimeout(() => el.classList.add('hidden'), 5200);
+}
+
+function applyLifecycleBusyState() {
+  document.querySelectorAll('button:not(.nav-item), input, select').forEach(control => {
+    if (lifecycleInProgress) {
+      if (control.dataset.lifecyclePreviousDisabled === undefined) {
+        control.dataset.lifecyclePreviousDisabled = control.disabled ? '1' : '0';
+      }
+      control.disabled = true;
+      return;
+    }
+    if (control.dataset.lifecyclePreviousDisabled !== undefined) {
+      control.disabled = control.dataset.lifecyclePreviousDisabled === '1';
+      delete control.dataset.lifecyclePreviousDisabled;
+    }
+  });
+}
+
+function setLifecycleBusy(busy) {
+  lifecycleInProgress = Boolean(busy);
+  document.body?.classList.toggle('lifecycle-busy', lifecycleInProgress);
+  applyLifecycleBusyState();
+}
+
+function applyLifecycleTerminalResult(result) {
+  const terminalId = String(result?.terminal_id || '');
+  if (!terminalId) return;
+  const terminal = terminals.find(row => row.id === terminalId);
+  if (terminal) {
+    terminal.running = Boolean(result.mt5_running);
+    terminal.process_state = result.mt5_running ? 'close_failed' : 'closed';
+  }
+  workerStates[terminalId] = {
+    ...(workerStates[terminalId] || terminal?.worker || {}),
+    terminal_id: terminalId,
+    alive: Boolean(result.worker_running),
+    connected: false,
+    state: result.worker_running ? 'stop_failed' : 'stopped',
+    message: result.worker_message || result.message || 'Desconectado.'
+  };
+  renderTerminals(terminals);
+  renderWorkerSummary();
+}
+
+function receiveLifecycleProgress(text) {
+  const payload = typeof text === 'string' ? JSON.parse(text) : text;
+  applyLifecycleTerminalResult(payload?.terminal);
+  pendingLifecycleOperations.get(payload?.operation_id)?.onProgress?.(payload);
+}
+
+function receiveLifecycleFinished(text) {
+  const payload = typeof text === 'string' ? JSON.parse(text) : text;
+  const operationId = String(payload?.operation_id || '');
+  const pending = pendingLifecycleOperations.get(operationId);
+  if (!pending) {
+    completedLifecycleOperations.set(operationId, payload);
+    return;
+  }
+  pendingLifecycleOperations.delete(operationId);
+  setLifecycleBusy(false);
+  pending.resolve(payload);
+}
+
+async function awaitLifecycleOperation(responseFactory, onProgress = null) {
+  if (lifecycleInProgress) {
+    return { ok: false, message: 'Aguarde a operação de encerramento atual terminar.', data: {} };
+  }
+  setLifecycleBusy(true);
+  let response;
+  try {
+    response = parseResponse(await responseFactory());
+  } catch (error) {
+    setLifecycleBusy(false);
+    return { ok: false, message: error?.message || 'Falha ao iniciar o encerramento.', data: {} };
+  }
+  if (!response.ok || !response.data?.operation_id) {
+    setLifecycleBusy(false);
+    return response;
+  }
+
+  const operationId = String(response.data.operation_id);
+  const completed = completedLifecycleOperations.get(operationId);
+  if (completed) {
+    completedLifecycleOperations.delete(operationId);
+    setLifecycleBusy(false);
+    return completed;
+  }
+  return new Promise(resolve => {
+    pendingLifecycleOperations.set(operationId, { resolve, onProgress });
+  });
 }
 
 function setBridgeStatus(ok, text) {
@@ -264,7 +357,7 @@ function updateSelectionUi() {
     if (input.checked !== checked) input.checked = checked;
     input.closest('.terminal-item')?.classList.toggle('selected', checked);
     const terminal = terminals.find(item => item.id === input.dataset.terminalSelect);
-    input.disabled = bulkOpenInProgress || bulkCloseInProgress || terminal?.enabled === false || !terminalInstanceReady(terminal);
+    input.disabled = lifecycleInProgress || bulkOpenInProgress || bulkCloseInProgress || terminal?.enabled === false || !terminalInstanceReady(terminal);
   });
 
   const count = selectedTerminalIds.size;
@@ -273,11 +366,11 @@ function updateSelectionUi() {
   const closeButton = document.getElementById('btnCloseSelected');
   const state = terminalBulkActionState(terminals, selectedTerminalIds, workerStates, maxActive);
   if (openButton) {
-    openButton.disabled = state.openDisabled || bulkOpenInProgress || bulkCloseInProgress;
+    openButton.disabled = lifecycleInProgress || state.openDisabled || bulkOpenInProgress || bulkCloseInProgress;
     openButton.title = state.openTitle;
   }
   if (closeButton) {
-    closeButton.disabled = state.closeDisabled || bulkOpenInProgress || bulkCloseInProgress;
+    closeButton.disabled = lifecycleInProgress || state.closeDisabled || bulkOpenInProgress || bulkCloseInProgress;
     closeButton.title = state.closeTitle;
   }
 }
@@ -420,6 +513,7 @@ function renderTerminals(rows) {
     refreshDashboardTerminalSources(true);
     updateWorkersStatus();
     renderWorkerSummary();
+    applyLifecycleBusyState();
     return;
   }
 
@@ -485,6 +579,7 @@ function renderTerminals(rows) {
   updateWorkersStatus();
   renderWorkerSummary();
   renderSelectedSnapshot();
+  applyLifecycleBusyState();
   updateLiveProof();
 }
 
@@ -585,6 +680,7 @@ function applyWorkerStates(rows) {
   refreshDashboardTerminalSources();
   renderWorkerSummary();
   LIVE_SLOT_IDS.forEach((_, index) => renderLiveSlot(index + 1));
+  applyLifecycleBusyState();
   updateLiveProof();
 }
 
@@ -597,7 +693,7 @@ function updateWorkersStatus() {
   el.textContent = `Leituras: ${connected} conectadas · ${alive}/${limit || '—'} ativas`;
   el.classList.toggle('ok', connected > 0);
   const stopAllButton = document.getElementById('btnStopAll');
-  stopAllButton.disabled = alive === 0;
+  stopAllButton.disabled = lifecycleInProgress || alive === 0;
   stopAllButton.title = alive === 0
     ? 'Nenhuma leitura ativa para encerrar'
     : `Encerra as ${alive} leitura(s) ativa(s)`;
@@ -827,7 +923,7 @@ function updateLiveSlotAction(slotNumber) {
   const symbolId = document.getElementById(`liveSymbol${slotNumber}`)?.value || '';
   if (!button) return;
   const state = liveSlotActionState(liveStreams[`live-${slotNumber}`] || {}, terminalId, symbolId);
-  button.disabled = state.disabled;
+  button.disabled = lifecycleInProgress || state.disabled;
   setTextIfChanged(button, state.label);
   button.title = state.changed
     ? 'Aplica o novo terminal ou ativo a este fluxo'
@@ -1365,6 +1461,7 @@ function setLocalTerminalShutdownTransition(terminalId) {
 }
 
 function showShutdownTransitions() {
+  setLifecycleBusy(true);
   terminals.forEach(terminal => {
     const worker = workerStates[terminal.id] || terminal.worker || {};
     if (terminal.running || worker.alive) {
@@ -1393,7 +1490,7 @@ async function stopTerminal(id) {
   setLocalTerminalShutdownTransition(id);
   await waitForUiPaint();
   try {
-    const res = parseResponse(await bridge.stopTerminal(id));
+    const res = await awaitLifecycleOperation(() => bridge.stopTerminal(id));
     toast(res.message, !res.ok);
   } finally {
     await loadWorkerStates();
@@ -1403,7 +1500,10 @@ async function stopTerminal(id) {
 }
 
 async function toggleReading(id) {
-  const res = parseResponse(await bridge.toggleWorker(id));
+  const worker = workerStates[id] || terminals.find(row => row.id === id)?.worker || {};
+  const res = worker.alive
+    ? await awaitLifecycleOperation(() => bridge.toggleWorker(id))
+    : parseResponse(await bridge.toggleWorker(id));
   toast(res.message, !res.ok);
   await loadWorkerStates();
   await loadTerminals();
@@ -1451,39 +1551,38 @@ async function closeSelectedTerminals() {
   if (bulkOpenInProgress || bulkCloseInProgress) return;
 
   const button = document.getElementById('btnCloseSelected');
-  let failures = 0;
   bulkCloseInProgress = true;
   updateSelectionUi();
+  ids.forEach(setLocalTerminalShutdownTransition);
+  await waitForUiPaint();
+  let res = { ok: false, message: 'O encerramento não foi iniciado.', data: {} };
   try {
-    for (let index = 0; index < ids.length; index++) {
-      const terminalId = ids[index];
-      if (button) button.textContent = `Fechando ${index + 1}/${ids.length}...`;
-      setLocalTerminalShutdownTransition(terminalId);
-      await waitForUiPaint();
-      const res = parseResponse(await bridge.stopTerminal(terminalId));
-      if (res.ok) {
-        Object.keys(liveTicks).forEach(slotId => {
-          if (liveTicks[slotId]?.terminal_id === terminalId) delete liveTicks[slotId];
-        });
-      } else {
-        failures += 1;
-        const terminal = terminals.find(item => item.id === terminalId);
-        toast(`${terminal?.label || terminalId}: ${res.message}`, true);
+    res = await awaitLifecycleOperation(
+      () => bridge.closeSelectedTerminals(JSON.stringify(ids)),
+      progress => {
+        if (button) button.textContent = `Fechando ${progress.index}/${progress.total}...`;
       }
-      await loadWorkerStates();
-      await loadTerminals();
-      await loadLiveStreams();
-    }
+    );
+    Object.values(res.data?.results || {}).forEach(result => {
+      if (!result.ok) {
+        const terminal = terminals.find(item => item.id === result.terminal_id);
+        toast(`${terminal?.label || result.terminal_id}: ${result.message}`, true);
+      }
+    });
   } finally {
+    await loadWorkerStates();
+    await loadTerminals();
+    await loadLiveStreams();
     bulkCloseInProgress = false;
     if (button) button.textContent = 'Fechar selecionados';
     updateSelectionUi();
   }
-  toast(closeBatchSummary(ids.length, failures), failures > 0);
+  const failures = Object.values(res.data?.results || {}).filter(result => !result.ok).length;
+  toast(closeBatchSummary(ids.length, failures), !res.ok);
 }
 
 async function stopAllWorkers() {
-  const res = parseResponse(await bridge.stopAllWorkers());
+  const res = await awaitLifecycleOperation(() => bridge.stopAllWorkers());
   toast(res.message, !res.ok);
   await loadWorkerStates();
   await loadTerminals();
@@ -1630,6 +1729,8 @@ window.addEventListener('DOMContentLoaded', () => {
     bridge.snapshotChanged.connect(text => receiveSnapshot(JSON.parse(text)));
     bridge.liveTickChanged.connect(text => receiveLiveTick(JSON.parse(text)));
     bridge.liveStreamStatusChanged.connect(text => applyLiveStreams(JSON.parse(text)));
+    bridge.lifecycleProgress.connect(receiveLifecycleProgress);
+    bridge.lifecycleFinished.connect(receiveLifecycleFinished);
     setBridgeStatus(true, 'Ponte Python conectada');
     loadBaseMt5Status();
     loadTerminals();
