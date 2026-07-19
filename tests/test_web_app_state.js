@@ -163,6 +163,8 @@ assert.equal(
   'Abrindo MT5',
 );
 assert.equal(context.workerLabel('authentication_failed'), 'falha de autenticação');
+assert.equal(context.workerLabel('unresponsive'), 'MT5 sem comunicação');
+assert.equal(context.workerLabel('attention_required'), 'requer atenção');
 assert.equal(context.workerLabel('account_mismatch'), 'conta divergente');
 assert.equal(context.workerLabel('broker_disconnected'), 'corretora desconectada');
 assert.equal(context.workerLabel('worker_start_failed'), 'falha ao iniciar leitura');

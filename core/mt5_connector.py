@@ -7,6 +7,7 @@ from typing import Any
 
 from .models import TerminalConnectionStatus, TerminalProfile, TickSnapshot
 from .terminal_states import (
+    MT5_COMMUNICATION_GUIDANCE,
     WorkerConnectionState,
     account_identity_matches,
     classify_initialize_failure,
@@ -67,6 +68,8 @@ class MT5Connector:
                         "Falha de autenticação no MT5. Faça login manualmente e verifique "
                         f"conta, senha e servidor. ({code} - {msg})"
                     )
+                elif is_communication_error(msg):
+                    message = MT5_COMMUNICATION_GUIDANCE
                 return TerminalConnectionStatus(
                     terminal_id=self.profile.id,
                     ok=False,
@@ -128,7 +131,7 @@ class MT5Connector:
                 terminal_id=self.profile.id,
                 ok=False,
                 message=(
-                    "Comunicação com o MT5 foi interrompida; tentando reconectar." + suffix
+                    MT5_COMMUNICATION_GUIDANCE
                     if retrying_error
                     else "MT5 aberto, mas sem conta logada. Faça login manual no terminal." + suffix
                 ),

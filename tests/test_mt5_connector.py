@@ -2,7 +2,7 @@ from types import SimpleNamespace
 
 from core.models import TerminalProfile
 from core.mt5_connector import MT5Connector
-from core.terminal_states import WorkerConnectionState
+from core.terminal_states import MT5_COMMUNICATION_GUIDANCE, WorkerConnectionState
 
 
 def build_initialized_connector(account_login: str = "") -> MT5Connector:
@@ -30,7 +30,7 @@ def test_ipc_failure_is_not_reported_as_missing_login(monkeypatch) -> None:
 
     assert status.ok is False
     assert status.state == WorkerConnectionState.RECONNECTING.value
-    assert "Comunicação com o MT5 foi interrompida" in status.message
+    assert status.message == MT5_COMMUNICATION_GUIDANCE
     assert "sem conta logada" not in status.message
 
 
@@ -81,6 +81,25 @@ def test_initialize_classifies_authorization_failure(tmp_path, monkeypatch) -> N
     assert status.ok is False
     assert status.state == WorkerConnectionState.AUTHENTICATION_FAILED.value
     assert "verifique conta, senha e servidor" in status.message
+
+
+def test_initialize_ipc_timeout_uses_short_communication_guidance(tmp_path, monkeypatch) -> None:
+    terminal_exe = tmp_path / "terminal64.exe"
+    terminal_exe.write_bytes(b"fake")
+    fake_mt5 = SimpleNamespace(
+        initialize=lambda **_kwargs: False,
+        last_error=lambda: (-10005, "IPC timeout"),
+    )
+    monkeypatch.setattr("core.mt5_connector.mt5", fake_mt5)
+    connector = MT5Connector(
+        TerminalProfile(id="ipc-timeout", label="IPC timeout", terminal_exe=str(terminal_exe))
+    )
+
+    status = connector.initialize()
+
+    assert status.ok is False
+    assert status.state == WorkerConnectionState.RECONNECTING.value
+    assert status.message == MT5_COMMUNICATION_GUIDANCE
 
 
 def test_connected_account_must_match_registered_identity(monkeypatch) -> None:

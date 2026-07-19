@@ -117,7 +117,8 @@
 - A interface conclui uma pintura antes de iniciar operações bloqueantes, exibindo **Abrindo MT5** e **Fechando MT5** imediatamente também nas ações em lote.
 - O X da aplicação mantém a janela visível para pintar **Fechando MT5 / Desconectando** em todos os terminais ativos antes de executar o shutdown bloqueante.
 - Autenticação recusada, conta conectada divergente, corretora offline, terminal divergente e configuração inválida deixam de aparecer como reconexão genérica.
-- Supervisor sinaliza worker sem resposta, queda inesperada, falha de criação e resistência ao encerramento sem declarar sucesso falso.
+- Supervisor sinaliza MT5 sem comunicação, queda inesperada do worker, falha de criação e resistência ao encerramento sem declarar sucesso falso.
+- Falhas transitórias ou persistentes de comunicação mantêm uma orientação curta para conferir login, servidor ou janelas pendentes no MT5.
 - Mais de um processo do mesmo executável é exposto como anomalia e tentativas transitórias prolongadas passam a exigir atenção.
 - Processos duplicados bloqueiam nova leitura até o fechamento, e um worker resistente mantém seu MT5 aberto para impedir reabertura automática contraditória.
 - Eventos tardios do worker não apagam falhas de abertura ou fechamento já confirmadas.

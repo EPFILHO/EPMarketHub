@@ -389,6 +389,9 @@ def test_alive_worker_without_activity_becomes_unresponsive(
     assert len(events) == 1
     assert events[0]["event"] == "status"
     assert events[0]["data"]["state"] == "unresponsive"
+    assert events[0]["data"]["message"] == (
+        "Sem comunicação com o MT5. Abra o terminal e verifique login, servidor ou janelas pendentes."
+    )
     assert manager.state("silent").alive is True
     assert manager.state("silent").connected is False
 

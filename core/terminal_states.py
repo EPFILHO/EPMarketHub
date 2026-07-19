@@ -51,6 +51,9 @@ class WorkerConnectionState(StrEnum):
 
 WORKER_UNRESPONSIVE_SECONDS = 15.0
 RECONNECT_ATTENTION_ATTEMPTS = 12
+MT5_COMMUNICATION_GUIDANCE = (
+    "Sem comunicação com o MT5. Abra o terminal e verifique login, servidor ou janelas pendentes."
+)
 
 _AUTHENTICATION_MARKERS = (
     "auth failed",

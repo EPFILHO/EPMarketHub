@@ -310,7 +310,7 @@ function workerLabel(state) {
     reconnecting: 'reconectando',
     configuration_error: 'configuração inválida',
     terminal_mismatch: 'terminal divergente',
-    unresponsive: 'worker sem resposta',
+    unresponsive: 'MT5 sem comunicação',
     attention_required: 'requer atenção',
     worker_start_failed: 'falha ao iniciar leitura',
     worker_crashed: 'worker interrompido',

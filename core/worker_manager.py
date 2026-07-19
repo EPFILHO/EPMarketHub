@@ -12,7 +12,11 @@ from typing import Any
 from .config import MAX_ACTIVE_TERMINALS
 from .models import SymbolDefinition, TerminalProfile
 from .mt5_worker import mt5_worker_main
-from .terminal_states import WORKER_UNRESPONSIVE_SECONDS, WorkerConnectionState
+from .terminal_states import (
+    MT5_COMMUNICATION_GUIDANCE,
+    WORKER_UNRESPONSIVE_SECONDS,
+    WorkerConnectionState,
+)
 from .worker_protocol import WorkerEvent, WorkerState, now_iso, valid_worker_event, worker_command
 
 logger = logging.getLogger(__name__)
@@ -527,10 +531,7 @@ class MT5WorkerManager:
                     "state": WorkerConnectionState.UNRESPONSIVE.value,
                     "alive": True,
                     "connected": False,
-                    "message": (
-                        "O processo worker continua vivo, mas deixou de responder. "
-                        "Pare a tentativa e reinicie a leitura."
-                    ),
+                    "message": MT5_COMMUNICATION_GUIDANCE,
                 }
             )
             events.append(
