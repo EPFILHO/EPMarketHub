@@ -43,6 +43,7 @@ Não pertencem ao kernel:
 10. O shutdown pode ser chamado mais de uma vez sem repetir efeitos destrutivos.
 11. Um worker ainda vivo impede o fechamento do MT5 que ele supervisiona, evitando reabertura automática após uma parada incompleta.
 12. Eventos tardios do worker não apagam falhas confirmadas de abertura ou fechamento do processo MT5.
+13. Durante uma operação de encerramento assíncrona, somente o executor serial acessa os managers mutáveis; consumidores da GUI usam snapshots até a conclusão enfileirada na thread Qt.
 
 ## Política do limite simultâneo
 
@@ -129,3 +130,5 @@ persistência ou limite simultâneo.
 
 O envelope, os comandos, os eventos e a reabertura controlada estão congelados
 como protocolo v1 em `docs/KERNEL_PROTOCOL.md`.
+
+A 0.4.11 altera somente a coordenação externa das esperas de encerramento. O protocolo v1, a propriedade das conexões, a ordem worker → MT5, os timeouts e o escalonamento para `terminate()`/`kill()` permanecem os mesmos.

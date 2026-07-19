@@ -84,6 +84,21 @@
 12. Selecione dois ou três MT5 abertos e clique em **Fechar selecionados**.
 13. Confirme que o texto do botão mostra o progresso e que cada card muda para **MT5 fechado / Desconectado** assim que seu próprio fechamento termina, sem esperar o último.
 
+## GUI responsiva 0.4.11
+
+Use a instalação de teste sincronizada e mantenha o Gerenciador de Tarefas disponível para confirmar os processos.
+
+1. Abra e conecte até três MT5 e confirme que a janela continua podendo ser movida, redimensionada e repintada durante todos os passos seguintes.
+2. Feche um MT5 individualmente e confirme a pintura imediata **Fechando MT5 / desconectando**; tente navegar entre as abas enquanto o encerramento termina.
+3. Confirme que botões, seletores e formulários que poderiam abrir, editar, excluir, reconectar ou alterar fluxos ficam desabilitados durante a operação.
+4. Selecione dois ou três MT5, clique em **Fechar selecionados** e confirme o progresso **Fechando 1/N**, **2/N** e assim por diante, com cada card concluído sem esperar o último.
+5. Reabra os MT5, clique repetidamente no X da aplicação e confirme que apenas um shutdown começa, a janela permanece visível e responsiva e só fecha depois do resultado final.
+6. Confirme no Gerenciador de Tarefas que os workers Python e cada `terminal64.exe` controlado terminaram realmente.
+7. Inicie o aplicativo sem abrir MT5, feche pelo X e confirme encerramento imediato, sem erro e sem segundo efeito ao clicar novamente.
+8. Após reabrir o aplicativo, confirme que cadastros, seleção, aliases e fluxos preservados continuam coerentes; nenhum sinal atrasado deve restaurar **Conectado** ou **MT5 aberto** para um processo já encerrado.
+9. Repita fechamento individual e em lote com os outros MT5 ativos e confirme isolamento: fechar um terminal não interrompe leitura nem processo dos demais antes de eles próprios entrarem no lote.
+10. Não provoque `terminate()`/`kill()` em conta real. A escalada resistente continua validada somente pelos fakes automatizados.
+
 ## Máquina de estados do kernel
 
 Use cadastros descartáveis e não armazene credenciais em arquivos ou capturas.

@@ -126,4 +126,17 @@
 - Fechamento dos terminais selecionados atualiza cada card conforme sua operação termina.
 - Estado visual de worker parado passa a ser apresentado como **Desconectado**.
 - Sincronizador seguro copia somente arquivos de desenvolvimento e protege `.git`, `MT5` e todo o `user_data` da instalação de teste.
-- Validação automatizada concluída; validação manual final da 0.4.10 com MT5 real permanece pendente.
+- Validação automatizada e manual da 0.4.10 concluídas no Windows com MT5 reais.
+
+## 0.4.11
+
+- Fechamento de workers e MT5 retirado da thread gráfica, mantendo QWebEngine, QWebChannel e mutações visuais na thread principal do Qt.
+- Executor Python dedicado e estritamente serial para esperas, `terminate()` e `kill()`, sem alterar seus tempos, escalonamento ou confirmação real de processos.
+- Polling e getters usam snapshots cacheados durante a operação, evitando acesso concorrente aos managers mutáveis.
+- Fechamento individual, em lote, parada de leituras e encerramento pelo X passam a retornar imediatamente e concluir por sinais enfileirados de progresso e resultado.
+- Ações conflitantes ficam desabilitadas enquanto o encerramento está ativo; os badges mostram imediatamente **Fechando MT5 / desconectando**.
+- Clique repetido no X e solicitações concorrentes não iniciam shutdown duplicado.
+- Falha de um terminal não interrompe o estado final dos demais; falhas resistentes continuam explícitas e preservam o MT5 quando o worker permanece vivo.
+- Eventos de conclusão ou progresso com ID antigo são descartados e não restauram estados anteriores.
+- Protocolo worker/bridge v1, polling, temporizações, limites e aparência não relacionada ao encerramento permanecem inalterados.
+- Numeração e ícones planejados para a 0.4.12 não foram iniciados.
