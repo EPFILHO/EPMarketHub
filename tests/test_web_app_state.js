@@ -20,12 +20,20 @@ function plain(value) {
   return JSON.parse(JSON.stringify(value));
 }
 
-vm.runInContext("terminals = [{ id: 'local-transition', running: false }]", context);
+const immediateBadge = { className: '', textContent: 'MT5 aberto' };
+context.document.getElementById = id => id === 'terminalItem-local-transition'
+  ? { querySelector: selector => selector === '.mt5-badge' ? immediateBadge : null }
+  : null;
+vm.runInContext("terminals = [{ id: 'local-transition', running: true, instance_status: { state: 'ready' } }]", context);
 context.setLocalProcessTransition('local-transition', 'opening');
 assert.equal(
   vm.runInContext("terminals.find(row => row.id === 'local-transition').process_state", context),
   'opening',
 );
+context.setLocalProcessTransition('local-transition', 'closing');
+assert.equal(immediateBadge.textContent, 'Fechando MT5');
+assert.match(immediateBadge.className, /warn/);
+context.document.getElementById = () => null;
 
 const terminalRows = [
   { id: 'one', running: true },

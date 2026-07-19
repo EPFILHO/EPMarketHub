@@ -1345,16 +1345,17 @@ function setLocalProcessTransition(terminalId, processState) {
   const terminal = terminals.find(row => row.id === terminalId);
   if (!terminal) return;
   terminal.process_state = processState;
-  updateTerminalWorkerRows();
+  const item = document.getElementById(`terminalItem-${terminalId}`);
+  const badge = item?.querySelector('.mt5-badge');
+  if (badge) {
+    const worker = workerStates[terminalId] || terminal.worker || {};
+    badge.className = `badge mt5-badge ${terminalProcessBadgeClass(terminal, worker)}`;
+    badge.textContent = terminalProcessLabel(terminal, worker);
+  }
 }
 
 function waitForUiPaint() {
-  return new Promise(resolve => {
-    const scheduleFrame = typeof requestAnimationFrame === 'function'
-      ? requestAnimationFrame
-      : callback => setTimeout(callback, 0);
-    scheduleFrame(() => setTimeout(resolve, 0));
-  });
+  return new Promise(resolve => setTimeout(resolve, 50));
 }
 
 async function launchTerminal(id) {
