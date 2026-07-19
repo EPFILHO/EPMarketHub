@@ -1345,7 +1345,7 @@ function setLocalProcessTransition(terminalId, processState) {
   const terminal = terminals.find(row => row.id === terminalId);
   if (!terminal) return;
   terminal.process_state = processState;
-  updateTerminalCards();
+  updateTerminalWorkerRows();
 }
 
 async function launchTerminal(id) {

@@ -112,6 +112,7 @@
 - Falhas IPC são diferenciadas da ausência de login; o processo permanece **MT5 aberto** enquanto o worker apresenta **Reconectando** até confirmar eventual reabertura.
 - Máquina de estados centralizada separa integridade da instância, ciclo do processo MT5 e conexão do worker.
 - Abertura, fechamento, reabertura e suas falhas possuem estados transitórios explícitos, com pós-condição real do processo.
+- A transição visual imediata de abertura/fechamento atualiza os cards existentes sem interromper a chamada QWebChannel.
 - Autenticação recusada, conta conectada divergente, corretora offline, terminal divergente e configuração inválida deixam de aparecer como reconexão genérica.
 - Supervisor sinaliza worker sem resposta, queda inesperada, falha de criação e resistência ao encerramento sem declarar sucesso falso.
 - Mais de um processo do mesmo executável é exposto como anomalia e tentativas transitórias prolongadas passam a exigir atenção.

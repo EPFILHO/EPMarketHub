@@ -6,7 +6,7 @@ const vm = require('node:vm');
 const source = fs.readFileSync(path.join(__dirname, '..', 'web', 'app.js'), 'utf8');
 const context = {
   window: { addEventListener() {} },
-  document: {},
+  document: { getElementById() { return null; } },
   console,
   Date,
   Intl,
@@ -19,6 +19,13 @@ vm.runInContext(source, context);
 function plain(value) {
   return JSON.parse(JSON.stringify(value));
 }
+
+vm.runInContext("terminals = [{ id: 'local-transition', running: false }]", context);
+context.setLocalProcessTransition('local-transition', 'opening');
+assert.equal(
+  vm.runInContext("terminals.find(row => row.id === 'local-transition').process_state", context),
+  'opening',
+);
 
 const terminalRows = [
   { id: 'one', running: true },
