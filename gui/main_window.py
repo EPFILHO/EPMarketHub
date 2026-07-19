@@ -7,7 +7,16 @@ from dataclasses import replace
 from pathlib import Path
 from uuid import uuid4
 
-from PySide6.QtCore import QCoreApplication, QEvent, QObject, QTimer, QUrl, Signal, Slot
+from PySide6.QtCore import (
+    QCoreApplication,
+    QEvent,
+    QEventLoop,
+    QObject,
+    QTimer,
+    QUrl,
+    Signal,
+    Slot,
+)
 from PySide6.QtGui import QCloseEvent, QColor
 from PySide6.QtWebChannel import QWebChannel
 from PySide6.QtWebEngineWidgets import QWebEngineView
@@ -199,8 +208,24 @@ class MarketHubBridge(QObject):
     def _publish_terminal_transition(self) -> None:
         """Entrega a transição ao QWebEngine antes de uma operação bloqueante."""
 
+        terminal_ids = [profile.id for profile in self.terminal_registry.list()]
+        states = self.worker_manager.states_payload(terminal_ids)
+        self.workerStatesChanged.emit(json.dumps(states, ensure_ascii=False))
         self._emit_terminals()
-        QCoreApplication.processEvents()
+        QCoreApplication.processEvents(QEventLoop.ProcessEventsFlag.ExcludeUserInputEvents)
+
+    def publish_shutdown_transitions(self) -> None:
+        """Publica Fechando/Desconectando para todos os recursos ainda ativos."""
+
+        changed = False
+        for profile in self.terminal_registry.list():
+            if self.terminal_manager.is_running(profile.id, profile):
+                self.process_states.set(profile.id, ProcessState.CLOSING)
+                changed = True
+            if self.worker_manager.mark_stopping(profile.id):
+                changed = True
+        if changed:
+            self._publish_terminal_transition()
 
     def _emit_live_streams(self) -> None:
         self.liveStreamStatusChanged.emit(
@@ -622,6 +647,7 @@ class MarketHubBridge(QObject):
             if not profile:
                 return fail("Terminal não encontrado.")
             self.process_states.set(terminal_id, ProcessState.CLOSING)
+            self.worker_manager.mark_stopping(terminal_id)
             self._publish_terminal_transition()
             _, worker_message = self.worker_manager.stop_worker(terminal_id)
             worker_still_running = self.worker_manager.is_running(terminal_id)
@@ -940,6 +966,7 @@ class MarketHubBridge(QObject):
                     failures += 1
                     continue
                 self.process_states.set(terminal_id, ProcessState.CLOSING)
+                self.worker_manager.mark_stopping(terminal_id)
                 self._publish_terminal_transition()
                 self.worker_manager.clear_live_streams_for_terminal(terminal_id)
                 _, worker_message = self.worker_manager.stop_worker(terminal_id)
@@ -1176,6 +1203,10 @@ class MainWindow(QMainWindow):
         self._shutdown_done = True
         logger.info("Encerrando EP Market Hub, workers e MT5 controlados...")
         self.worker_poll_timer.stop()
+        try:
+            self.bridge.publish_shutdown_transitions()
+        except Exception:
+            logger.exception("Falha ao publicar estados visuais de encerramento")
         try:
             self.worker_manager.clear_all_live_streams()
         except Exception:

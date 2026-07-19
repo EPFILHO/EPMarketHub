@@ -135,6 +135,7 @@ const fullWorkerCapacityActions = context.terminalActionState(
 assert.equal(fullWorkerCapacityActions.openBlocked, true);
 assert.equal(fullWorkerCapacityActions.readingBlocked, true);
 assert.equal(context.workerLabel('stopped'), 'desconectado');
+assert.equal(context.workerLabel('stopping'), 'desconectando');
 assert.equal(context.workerLabel(''), 'desconectado');
 assert.equal(context.workerLabel('reopening_terminal'), 'reconectando');
 assert.equal(

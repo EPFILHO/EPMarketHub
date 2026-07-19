@@ -300,7 +300,7 @@ function workerLabel(state) {
   const labels = {
     stopped: 'desconectado',
     starting: 'iniciando',
-    stopping: 'encerrando',
+    stopping: 'desconectando',
     connected: 'conectado',
     waiting_login: 'aguardando login',
     authentication_failed: 'falha de autenticação',

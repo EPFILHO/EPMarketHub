@@ -149,15 +149,7 @@ class MT5WorkerManager:
             self._mark_live_terminal_stopped(terminal_id)
             return False, "A leitura deste terminal já está parada."
 
-        current = self._states.setdefault(terminal_id, WorkerState(terminal_id=terminal_id))
-        current.update(
-            {
-                "state": WorkerConnectionState.STOPPING.value,
-                "connected": False,
-                "alive": True,
-                "message": "Encerrando leitura persistente...",
-            }
-        )
+        self.mark_stopping(terminal_id)
 
         try:
             handle.command_queue.put_nowait(worker_command("stop"))
@@ -208,6 +200,22 @@ class MT5WorkerManager:
         )
         self._mark_live_terminal_stopped(terminal_id)
         return True, "Leitura persistente encerrada."
+
+    def mark_stopping(self, terminal_id: str) -> bool:
+        """Publica a intenção de parada sem executar a operação bloqueante."""
+
+        if terminal_id not in self._handles:
+            return False
+        current = self._states.setdefault(terminal_id, WorkerState(terminal_id=terminal_id))
+        current.update(
+            {
+                "state": WorkerConnectionState.STOPPING.value,
+                "connected": False,
+                "alive": True,
+                "message": "Encerrando leitura persistente...",
+            }
+        )
+        return True
 
     def stop_all(self) -> None:
         if self._shutdown:

@@ -57,8 +57,13 @@ class FakeQCoreApplication:
     process_events_calls = 0
 
     @classmethod
-    def processEvents(cls) -> None:
+    def processEvents(cls, *args) -> None:
         cls.process_events_calls += 1
+
+
+class FakeQEventLoop:
+    class ProcessEventsFlag:
+        ExcludeUserInputEvents = object()
 
 
 class FakeQUrl:
@@ -78,6 +83,7 @@ def install_qt_stubs() -> None:
     qtcore = ModuleType("PySide6.QtCore")
     qtcore.QCoreApplication = FakeQCoreApplication
     qtcore.QEvent = FakeQEvent
+    qtcore.QEventLoop = FakeQEventLoop
     qtcore.QObject = FakeQObject
     qtcore.QTimer = FakeQTimer
     qtcore.QUrl = FakeQUrl
@@ -217,6 +223,7 @@ class FakeWorkerManager:
         self.stopped = []
         self.events = []
         self.forgotten = []
+        self.stopping_ids = set()
 
     def active_count(self) -> int:
         return len(self.running_ids)
@@ -239,12 +246,21 @@ class FakeWorkerManager:
         if terminal_id in self.failed_stop_ids:
             return False, "Não foi possível confirmar o encerramento do worker."
         self.running_ids.discard(terminal_id)
+        self.stopping_ids.discard(terminal_id)
         return was_running, "Leitura encerrada."
 
+    def mark_stopping(self, terminal_id: str) -> bool:
+        if terminal_id not in self.running_ids:
+            return False
+        self.stopping_ids.add(terminal_id)
+        return True
+
     def state(self, terminal_id: str) -> WorkerState:
+        stopping = terminal_id in self.stopping_ids
         return WorkerState(
             terminal_id=terminal_id,
-            state="connected" if terminal_id in self.running_ids else "stopped",
+            state=("stopping" if stopping else "connected") if terminal_id in self.running_ids else "stopped",
+            connected=terminal_id in self.running_ids and not stopping,
             alive=terminal_id in self.running_ids,
         )
 
@@ -567,8 +583,9 @@ def test_stop_terminal_distinguishes_close_failure_from_already_closed(tmp_path:
 
 
 def test_stop_terminal_publishes_closing_before_blocking_operation(tmp_path: Path) -> None:
-    bridge, terminal_manager, _ = build_bridge(tmp_path, ["one"])
+    bridge, terminal_manager, worker_manager = build_bridge(tmp_path, ["one"])
     terminal_manager.open_ids.add("one")
+    worker_manager.running_ids.add("one")
     previous_calls = FakeQCoreApplication.process_events_calls
 
     bridge.stopTerminal("one")
@@ -576,6 +593,23 @@ def test_stop_terminal_publishes_closing_before_blocking_operation(tmp_path: Pat
     assert FakeQCoreApplication.process_events_calls == previous_calls + 1
     published = json.loads(bridge.terminalsChanged.values[-2])[0]
     assert published["process_state"] == "closing"
+    worker_states = json.loads(bridge.workerStatesChanged.values[-1])
+    assert worker_states["one"]["state"] == "stopping"
+
+
+def test_app_shutdown_publishes_closing_and_stopping_for_all_active_terminals(
+    tmp_path: Path,
+) -> None:
+    bridge, terminal_manager, worker_manager = build_bridge(tmp_path, ["one", "two"])
+    terminal_manager.open_ids.update({"one", "two"})
+    worker_manager.running_ids.update({"one", "two"})
+
+    bridge.publish_shutdown_transitions()
+
+    terminals = json.loads(bridge.terminalsChanged.values[-1])
+    states = json.loads(bridge.workerStatesChanged.values[-1])
+    assert {terminal["process_state"] for terminal in terminals} == {"closing"}
+    assert {state["state"] for state in states.values()} == {"stopping"}
 
 
 def test_late_worker_event_does_not_hide_terminal_close_failure(tmp_path: Path) -> None:
