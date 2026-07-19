@@ -1,4 +1,6 @@
 import queue
+import threading
+import time
 from pathlib import Path
 
 import pytest
@@ -96,6 +98,17 @@ class KillRequiredProcess(FakeProcess):
 class ResistantProcess(KillRequiredProcess):
     def kill(self) -> None:
         pass
+
+
+class BlockingJoinProcess(FakeProcess):
+    join_started = threading.Event()
+    release_join = threading.Event()
+
+    def join(self, timeout=None) -> None:
+        type(self).join_started.set()
+        type(self).release_join.wait(timeout=1.0)
+        self.alive = False
+        self.exitcode = 0
 
 
 class FakeContext:
@@ -202,6 +215,34 @@ def test_stopping_one_worker_keeps_other_workers_alive(manager: MT5WorkerManager
     assert manager.is_running("two") is False
     assert manager.is_running("three") is True
     assert manager.active_count() == 2
+
+
+def test_blocking_join_does_not_hold_manager_lock_for_other_worker(monkeypatch) -> None:
+    BlockingJoinProcess.join_started.clear()
+    BlockingJoinProcess.release_join.clear()
+    context = FakeContext(BlockingJoinProcess)
+    monkeypatch.setattr("core.worker_manager.mp.get_context", lambda method: context)
+    manager = MT5WorkerManager(max_workers=3)
+    manager.start_worker(profile("one"), [])
+    manager.start_worker(profile("two"), [])
+    stop_result = []
+    stop_thread = threading.Thread(
+        target=lambda: stop_result.append(manager.stop_worker("one")),
+    )
+
+    stop_thread.start()
+    assert BlockingJoinProcess.join_started.wait(timeout=0.5)
+    started_at = time.monotonic()
+    other_running = manager.is_running("two")
+    other_state = manager.state("two").state
+    returned_after = time.monotonic() - started_at
+    BlockingJoinProcess.release_join.set()
+    stop_thread.join(timeout=1.0)
+
+    assert returned_after < 0.1
+    assert other_running is True
+    assert other_state == "starting"
+    assert stop_result[0][0] is True
 
 
 def test_start_failure_releases_command_queue_and_records_error(monkeypatch) -> None:
@@ -376,6 +417,31 @@ def test_current_worker_event_is_applied_and_forwarded(manager: MT5WorkerManager
 
     assert manager.poll_events() == [event]
     assert manager.state("current").connected is True
+
+
+def test_late_event_cannot_restore_worker_marked_for_shutdown(
+    manager: MT5WorkerManager,
+) -> None:
+    manager.start_worker(profile("closing"), [])
+    current_pid = manager.state("closing").pid
+    manager.mark_stopping("closing")
+    manager.event_queue.items.append(
+        {
+            "protocol_version": WORKER_PROTOCOL_VERSION,
+            "terminal_id": "closing",
+            "event": "heartbeat",
+            "data": {
+                "pid": current_pid,
+                "state": "connected",
+                "alive": True,
+                "connected": True,
+            },
+        }
+    )
+
+    assert manager.poll_events() == []
+    assert manager.state("closing").state == "stopping"
+    assert manager.state("closing").connected is False
 
 
 def test_alive_worker_without_activity_becomes_unresponsive(

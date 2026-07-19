@@ -215,13 +215,22 @@ assert.match(progressiveCloseSource, /awaitLifecycleOperation/);
 
 const individualCloseSource = context.stopTerminal.toString();
 assert.match(individualCloseSource, /setLocalTerminalShutdownTransition\(id\);\s*await waitForUiPaint\(\)/);
-assert.match(individualCloseSource, /awaitLifecycleOperation\(\(\) => bridge\.stopTerminal\(id\)\)/);
+assert.match(individualCloseSource, /bridge\.stopTerminal\(id\)/);
+assert.match(individualCloseSource, /terminalIds: \[id\]/);
 
 const shutdownTransitionSource = context.showShutdownTransitions.toString();
-assert.match(shutdownTransitionSource, /setLifecycleBusy\(true\)/);
+assert.match(shutdownTransitionSource, /setLifecycleBusy\(true, \{ global: true \}\)/);
 assert.match(source, /bridge\.lifecycleProgress\.connect\(receiveLifecycleProgress\)/);
 assert.match(source, /bridge\.lifecycleFinished\.connect\(receiveLifecycleFinished\)/);
-assert.match(context.updateSelectionUi.toString(), /lifecycleInProgress/);
+assert.match(context.updateSelectionUi.toString(), /selectedHasLifecycleBusy/);
+assert.doesNotMatch(source, /lifecycleInProgress/);
+vm.runInContext("lifecycleBusyTerminalIds.add('one')", context);
+assert.equal(context.lifecycleTerminalBusy('one'), true);
+assert.equal(context.lifecycleTerminalBusy('two'), false);
+assert.equal(context.lifecycleScopeConflicts({ terminalIds: ['one'] }), true);
+assert.equal(context.lifecycleScopeConflicts({ terminalIds: ['two'] }), false);
+assert.equal(context.lifecycleScopeConflicts({ global: true }), true);
+vm.runInContext("lifecycleBusyTerminalIds.clear()", context);
 
 const closedBeyondCapacity = context.terminalBulkActionState(
   terminalRows,

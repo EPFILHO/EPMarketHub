@@ -84,8 +84,10 @@ class MarketHubBridge(QObject):
             self._finish_lifecycle_operation,
             Qt.ConnectionType.QueuedConnection,
         )
-        self._active_lifecycle_id: str | None = None
-        self._active_lifecycle_kind: str | None = None
+        self._lifecycle_operations: dict[str, dict] = {}
+        self._terminal_lifecycle_operations: dict[str, str] = {}
+        self._terminal_lifecycle_runtime: dict[str, dict[str, int | bool]] = {}
+        self._shutdown_operation_id: str | None = None
         self._completed_shutdown: dict | None = None
         self._cached_terminals: list[dict] = []
         self._cached_worker_states: list[dict] = []
@@ -137,7 +139,23 @@ class MarketHubBridge(QObject):
                 logger.exception("Não foi possível normalizar a pasta da instância %s", profile.id)
 
     def _running_mt5_count(self) -> int:
-        return self.terminal_manager.running_count(self.terminal_registry.list())
+        busy_terminal_ids = set(self._terminal_lifecycle_operations)
+        if not busy_terminal_ids:
+            return self.terminal_manager.running_count(self.terminal_registry.list())
+        cached_by_id = {
+            str(row.get("id", "")): row for row in self._cached_terminals
+        }
+        count = 0
+        for profile in self.terminal_registry.list():
+            runtime = self._terminal_lifecycle_runtime.get(profile.id)
+            cached = cached_by_id.get(profile.id)
+            if profile.id in busy_terminal_ids and runtime is not None:
+                count += int(bool(runtime.get("running")))
+            elif profile.id in busy_terminal_ids and cached is not None:
+                count += int(bool(cached.get("running")))
+            else:
+                count += int(self.terminal_manager.is_running(profile.id, profile))
+        return count
 
     def _activation_limit_message(self) -> str:
         return (
@@ -201,6 +219,9 @@ class MarketHubBridge(QObject):
 
     def _terminals_payload(self) -> list[dict]:
         rows: list[dict] = []
+        cached_by_id = {
+            str(row.get("id", "")): row for row in self._cached_terminals
+        }
         terminals = sorted(
             self.terminal_registry.list(),
             key=lambda terminal: (
@@ -211,6 +232,20 @@ class MarketHubBridge(QObject):
         )
         for terminal in terminals:
             item = terminal.to_dict()
+            cached = cached_by_id.get(terminal.id)
+            if terminal.id in self._terminal_lifecycle_operations and cached is not None:
+                item["instance_status"] = cached.get("instance_status", {})
+                runtime = self._terminal_lifecycle_runtime.get(terminal.id, cached)
+                item["running"] = bool(runtime.get("running"))
+                item["process_count"] = int(runtime.get("process_count", item["running"]))
+                item["process_state"] = self.process_states.resolve(
+                    terminal.id,
+                    running=item["running"],
+                    process_count=item["process_count"],
+                )
+                item["worker"] = self.worker_manager.state(terminal.id).to_dict()
+                rows.append(item)
+                continue
             item["instance_status"] = self.terminal_manager.instance_status(terminal)
             process_count = self.terminal_manager.process_count(terminal)
             item["running"] = process_count > 0
@@ -276,15 +311,36 @@ class MarketHubBridge(QObject):
 
     @property
     def lifecycle_busy(self) -> bool:
-        return self._active_lifecycle_id is not None
+        return bool(self._lifecycle_operations)
 
-    def _lifecycle_busy_response(self) -> str:
+    def terminal_lifecycle_busy(self, terminal_id: str) -> bool:
+        return bool(
+            self._shutdown_operation_id
+            or terminal_id in self._terminal_lifecycle_operations
+        )
+
+    def _lifecycle_conflict_response(self, terminal_ids: list[str] | None = None) -> str:
+        terminal_ids = terminal_ids or []
+        conflicting = {
+            terminal_id: self._terminal_lifecycle_operations[terminal_id]
+            for terminal_id in terminal_ids
+            if terminal_id in self._terminal_lifecycle_operations
+        }
         return fail(
-            "Aguarde a operação de encerramento atual terminar.",
+            "Aguarde o encerramento do terminal envolvido terminar.",
             {
-                "operation_id": self._active_lifecycle_id,
-                "kind": self._active_lifecycle_kind,
+                "shutdown_operation_id": self._shutdown_operation_id,
+                "terminal_operations": conflicting,
             },
+        )
+
+    def _has_lifecycle_conflict(self, terminal_ids: list[str]) -> bool:
+        return bool(
+            self._shutdown_operation_id
+            or any(
+                terminal_id in self._terminal_lifecycle_operations
+                for terminal_id in terminal_ids
+            )
         )
 
     def _stop_profile_blocking(
@@ -455,21 +511,40 @@ class MarketHubBridge(QObject):
     ) -> str:
         if application_shutdown and self._completed_shutdown is not None:
             return ok(self._completed_shutdown, "O encerramento da aplicação já foi concluído.")
-        if self.lifecycle_busy:
-            if application_shutdown and self._active_lifecycle_kind == "application_shutdown":
-                return ok(
-                    {
-                        "operation_id": self._active_lifecycle_id,
-                        "kind": self._active_lifecycle_kind,
-                    },
-                    "O encerramento da aplicação já está em andamento.",
-                )
-            return self._lifecycle_busy_response()
+        if application_shutdown and self._shutdown_operation_id:
+            return ok(
+                {
+                    "operation_id": self._shutdown_operation_id,
+                    "kind": "application_shutdown",
+                },
+                "O encerramento da aplicação já está em andamento.",
+            )
 
         unique_profiles = list({profile.id: profile for profile in profiles}.values())
+        terminal_ids = [profile.id for profile in unique_profiles]
+        if not application_shutdown and self._has_lifecycle_conflict(terminal_ids):
+            return self._lifecycle_conflict_response(terminal_ids)
+
+        terminal_runtime = {}
+        for profile in unique_profiles:
+            process_count = self.terminal_manager.process_count(profile)
+            terminal_runtime[profile.id] = {
+                "running": process_count > 0,
+                "process_count": process_count,
+            }
+
         operation_id = uuid4().hex
-        self._active_lifecycle_id = operation_id
-        self._active_lifecycle_kind = kind
+        self._lifecycle_operations[operation_id] = {
+            "kind": kind,
+            "terminal_ids": terminal_ids,
+            "application_shutdown": application_shutdown,
+        }
+        if application_shutdown:
+            self._shutdown_operation_id = operation_id
+        else:
+            for terminal_id in terminal_ids:
+                self._terminal_lifecycle_operations[terminal_id] = operation_id
+                self._terminal_lifecycle_runtime[terminal_id] = terminal_runtime[terminal_id]
 
         changed = False
         for profile in unique_profiles:
@@ -490,8 +565,13 @@ class MarketHubBridge(QObject):
             application_shutdown=application_shutdown,
         )
         if not self._lifecycle_executor.start(operation_id, task):
-            self._active_lifecycle_id = None
-            self._active_lifecycle_kind = None
+            self._lifecycle_operations.pop(operation_id, None)
+            if self._shutdown_operation_id == operation_id:
+                self._shutdown_operation_id = None
+            for terminal_id in terminal_ids:
+                if self._terminal_lifecycle_operations.get(terminal_id) == operation_id:
+                    self._terminal_lifecycle_operations.pop(terminal_id, None)
+                    self._terminal_lifecycle_runtime.pop(terminal_id, None)
             return fail("Não foi possível iniciar a operação de encerramento.")
         return ok(
             {"operation_id": operation_id, "kind": kind},
@@ -505,7 +585,7 @@ class MarketHubBridge(QObject):
         except json.JSONDecodeError:
             logger.exception("Progresso inválido recebido do executor de encerramento")
             return
-        if payload.get("operation_id") != self._active_lifecycle_id:
+        if payload.get("operation_id") not in self._lifecycle_operations:
             logger.warning("Progresso tardio de encerramento descartado: %s", payload_json)
             return
         self.lifecycleProgress.emit(payload_json)
@@ -517,11 +597,13 @@ class MarketHubBridge(QObject):
         except json.JSONDecodeError:
             logger.exception("Resultado inválido recebido do executor de encerramento")
             return
-        if payload.get("operation_id") != self._active_lifecycle_id:
+        operation_id = str(payload.get("operation_id") or "")
+        operation = self._lifecycle_operations.get(operation_id)
+        if operation is None:
             logger.warning("Conclusão tardia de encerramento descartada: %s", payload_json)
             return
 
-        kind = str(payload.get("kind") or self._active_lifecycle_kind or "")
+        kind = str(payload.get("kind") or operation.get("kind") or "")
         results = payload.get("data", {}).get("results", {})
         close_mt5 = kind in {"close_terminal", "close_selected", "application_shutdown"}
         for terminal_id, result in results.items():
@@ -533,8 +615,13 @@ class MarketHubBridge(QObject):
             else:
                 self.process_states.complete_startup(terminal_id)
 
-        self._active_lifecycle_id = None
-        self._active_lifecycle_kind = None
+        self._lifecycle_operations.pop(operation_id, None)
+        if self._shutdown_operation_id == operation_id:
+            self._shutdown_operation_id = None
+        for terminal_id in operation.get("terminal_ids", []):
+            if self._terminal_lifecycle_operations.get(terminal_id) == operation_id:
+                self._terminal_lifecycle_operations.pop(terminal_id, None)
+                self._terminal_lifecycle_runtime.pop(terminal_id, None)
         if kind == "application_shutdown":
             self._completed_shutdown = payload
         self._emit_worker_states()
@@ -558,7 +645,7 @@ class MarketHubBridge(QObject):
         self.liveStreamStatusChanged.emit(json.dumps(payload, ensure_ascii=False))
 
     def poll_worker_events(self) -> None:
-        if self._active_lifecycle_id is not None:
+        if self._shutdown_operation_id is not None:
             return
         events = self.worker_manager.poll_events()
         if not events:
@@ -654,28 +741,28 @@ class MarketHubBridge(QObject):
 
     @Slot(result=str)
     def getTerminals(self) -> str:
-        if self._active_lifecycle_id is not None:
+        if self._shutdown_operation_id is not None:
             return ok(self._cached_terminals)
         self.poll_worker_events()
         return ok(self._terminals_payload())
 
     @Slot(result=str)
     def getWorkerStates(self) -> str:
-        if self._active_lifecycle_id is not None:
+        if self._shutdown_operation_id is not None:
             return ok(self._cached_worker_states)
         self.poll_worker_events()
         return ok(self._worker_states_payload())
 
     @Slot(result=str)
     def getSnapshots(self) -> str:
-        if self._active_lifecycle_id is not None:
+        if self._shutdown_operation_id is not None:
             return ok(self._cached_snapshots)
         self.poll_worker_events()
         return ok(self.worker_manager.snapshots_payload())
 
     @Slot(result=str)
     def getLiveStreams(self) -> str:
-        if self._active_lifecycle_id is not None:
+        if self._shutdown_operation_id is not None:
             return ok(self._cached_live_streams)
         self.poll_worker_events()
         return ok(self.worker_manager.live_streams_payload())
@@ -690,7 +777,7 @@ class MarketHubBridge(QObject):
 
     @Slot(result=str)
     def getRuntimeLimits(self) -> str:
-        if self._active_lifecycle_id is not None:
+        if self._shutdown_operation_id is not None:
             return ok(self._cached_runtime_limits)
         return ok(self._runtime_limits_payload())
 
@@ -706,8 +793,8 @@ class MarketHubBridge(QObject):
 
     @Slot(str, str, str, result=str)
     def createTerminal(self, label: str, broker_name: str, account_login: str) -> str:
-        if self.lifecycle_busy:
-            return self._lifecycle_busy_response()
+        if self._shutdown_operation_id:
+            return self._lifecycle_conflict_response()
         try:
             validation = self._validate_terminal_fields(label, broker_name, account_login)
             if validation:
@@ -778,8 +865,8 @@ class MarketHubBridge(QObject):
 
     @Slot(str, str, str, result=str)
     def adoptTerminalInstance(self, label: str, broker_name: str, account_login: str) -> str:
-        if self.lifecycle_busy:
-            return self._lifecycle_busy_response()
+        if self._shutdown_operation_id:
+            return self._lifecycle_conflict_response()
         validation = self._validate_terminal_fields(label, broker_name, account_login)
         if validation:
             return fail(validation)
@@ -846,8 +933,8 @@ class MarketHubBridge(QObject):
         broker_name: str,
         account_login: str,
     ) -> str:
-        if self.lifecycle_busy:
-            return self._lifecycle_busy_response()
+        if self.terminal_lifecycle_busy(terminal_id):
+            return self._lifecycle_conflict_response([terminal_id])
         profile = self.terminal_registry.get(terminal_id)
         if not profile:
             return fail("Terminal não encontrado.")
@@ -931,8 +1018,8 @@ class MarketHubBridge(QObject):
     def launchTerminal(self, terminal_id: str) -> str:
         """Abre a instância controlada e inicia sua leitura persistente."""
 
-        if self.lifecycle_busy:
-            return self._lifecycle_busy_response()
+        if self.terminal_lifecycle_busy(terminal_id):
+            return self._lifecycle_conflict_response([terminal_id])
         try:
             profile = self.terminal_registry.get(terminal_id)
             if not profile:
@@ -999,8 +1086,8 @@ class MarketHubBridge(QObject):
 
     @Slot(str, str, result=str)
     def deleteTerminal(self, terminal_id: str, confirmation: str) -> str:
-        if self.lifecycle_busy:
-            return self._lifecycle_busy_response()
+        if self.terminal_lifecycle_busy(terminal_id):
+            return self._lifecycle_conflict_response([terminal_id])
         profile = self.terminal_registry.get(terminal_id)
         if not profile:
             return fail("Terminal não encontrado.")
@@ -1063,8 +1150,8 @@ class MarketHubBridge(QObject):
 
     @Slot(str, result=str)
     def recreateTerminalInstance(self, terminal_id: str) -> str:
-        if self.lifecycle_busy:
-            return self._lifecycle_busy_response()
+        if self.terminal_lifecycle_busy(terminal_id):
+            return self._lifecycle_conflict_response([terminal_id])
         profile = self.terminal_registry.get(terminal_id)
         if not profile:
             return fail("Terminal não encontrado.")
@@ -1094,8 +1181,8 @@ class MarketHubBridge(QObject):
 
     @Slot(str, result=str)
     def removeMissingTerminal(self, terminal_id: str) -> str:
-        if self.lifecycle_busy:
-            return self._lifecycle_busy_response()
+        if self.terminal_lifecycle_busy(terminal_id):
+            return self._lifecycle_conflict_response([terminal_id])
         profile = self.terminal_registry.get(terminal_id)
         if not profile:
             return fail("Terminal não encontrado.")
@@ -1118,8 +1205,8 @@ class MarketHubBridge(QObject):
 
     @Slot(str, result=str)
     def startWorker(self, terminal_id: str) -> str:
-        if self.lifecycle_busy:
-            return self._lifecycle_busy_response()
+        if self.terminal_lifecycle_busy(terminal_id):
+            return self._lifecycle_conflict_response([terminal_id])
         try:
             profile = self.terminal_registry.get(terminal_id)
             if not profile:
@@ -1194,12 +1281,12 @@ class MarketHubBridge(QObject):
 
     @Slot(str, result=str)
     def startSelectedWorkers(self, terminal_ids_json: str) -> str:
-        if self.lifecycle_busy:
-            return self._lifecycle_busy_response()
         try:
             terminal_ids, error = self._parse_terminal_ids(terminal_ids_json)
             if error:
                 return fail(error)
+            if self._has_lifecycle_conflict(terminal_ids):
+                return self._lifecycle_conflict_response(terminal_ids)
 
             profiles_by_id = {profile.id: profile for profile in self.terminal_registry.list()}
             missing = [terminal_id for terminal_id in terminal_ids if terminal_id not in profiles_by_id]
@@ -1306,8 +1393,8 @@ class MarketHubBridge(QObject):
 
     @Slot(str, result=str)
     def reconnectWorker(self, terminal_id: str) -> str:
-        if self.lifecycle_busy:
-            return self._lifecycle_busy_response()
+        if self.terminal_lifecycle_busy(terminal_id):
+            return self._lifecycle_conflict_response([terminal_id])
         try:
             sent, message = self.worker_manager.request_reconnect(terminal_id)
             return ok(message=message) if sent else fail(message)
@@ -1317,8 +1404,8 @@ class MarketHubBridge(QObject):
 
     @Slot(str, result=str)
     def refreshSnapshot(self, terminal_id: str) -> str:
-        if self.lifecycle_busy:
-            return self._lifecycle_busy_response()
+        if self.terminal_lifecycle_busy(terminal_id):
+            return self._lifecycle_conflict_response([terminal_id])
         try:
             profile = self.terminal_registry.get(terminal_id)
             if not profile:
@@ -1337,8 +1424,8 @@ class MarketHubBridge(QObject):
 
     @Slot(str, str, str, result=str)
     def configureLiveStream(self, slot_id: str, terminal_id: str, symbol_id: str) -> str:
-        if self.lifecycle_busy:
-            return self._lifecycle_busy_response()
+        if self.terminal_lifecycle_busy(terminal_id):
+            return self._lifecycle_conflict_response([terminal_id])
         try:
             profile = self.terminal_registry.get(terminal_id)
             if not profile:
@@ -1387,8 +1474,9 @@ class MarketHubBridge(QObject):
 
     @Slot(str, result=str)
     def clearLiveStream(self, slot_id: str) -> str:
-        if self.lifecycle_busy:
-            return self._lifecycle_busy_response()
+        terminal_id = self.worker_manager.live_stream_terminal_id(slot_id)
+        if terminal_id and self.terminal_lifecycle_busy(terminal_id):
+            return self._lifecycle_conflict_response([terminal_id])
         try:
             _, message = self.worker_manager.clear_live_stream(slot_id)
             self._emit_live_streams()
@@ -1400,7 +1488,9 @@ class MarketHubBridge(QObject):
     @Slot(result=str)
     def clearAllLiveStreams(self) -> str:
         if self.lifecycle_busy:
-            return self._lifecycle_busy_response()
+            return self._lifecycle_conflict_response(
+                list(self._terminal_lifecycle_operations)
+            )
         try:
             self.worker_manager.clear_all_live_streams()
             self._emit_live_streams()

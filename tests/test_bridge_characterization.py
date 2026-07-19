@@ -296,6 +296,9 @@ class FakeWorkerManager:
     def live_streams_payload(self) -> dict:
         return {}
 
+    def live_stream_terminal_id(self, slot_id: str) -> str:
+        return ""
+
     def snapshots_payload(self) -> dict:
         return {}
 
@@ -650,6 +653,90 @@ def test_stop_terminal_publishes_closing_before_blocking_operation(tmp_path: Pat
     cached = json.loads(bridge.getTerminals())["data"][0]
     assert cached["process_state"] == "closing"
     wait_for_lifecycle(bridge, response_text)
+
+
+def test_closing_one_terminal_does_not_block_opening_another(tmp_path: Path) -> None:
+    bridge, terminal_manager, worker_manager = build_bridge(tmp_path, ["one", "two"])
+    terminal_manager.open_ids.add("one")
+    worker_manager.running_ids.add("one")
+    worker_manager.stop_delay = 0.2
+
+    close_response = bridge.stopTerminal("one")
+    started_at = time.monotonic()
+    open_response = json.loads(bridge.launchTerminal("two"))
+    open_returned_after = time.monotonic() - started_at
+
+    assert open_response["ok"] is True
+    assert open_returned_after < 0.1
+    assert terminal_manager.open_ids == {"one", "two"}
+    assert worker_manager.running_ids == {"one", "two"}
+    close_result = wait_for_lifecycle(bridge, close_response)
+    assert close_result["ok"] is True
+    assert terminal_manager.open_ids == {"two"}
+    assert worker_manager.running_ids == {"two"}
+
+
+def test_closing_terminal_rejects_only_actions_for_same_terminal(tmp_path: Path) -> None:
+    bridge, terminal_manager, worker_manager = build_bridge(tmp_path, ["one", "two"])
+    terminal_manager.open_ids.add("one")
+    worker_manager.running_ids.add("one")
+    worker_manager.stop_delay = 0.2
+
+    close_response = bridge.stopTerminal("one")
+    same_terminal_response = json.loads(bridge.launchTerminal("one"))
+    other_terminal_response = json.loads(bridge.launchTerminal("two"))
+
+    assert same_terminal_response["ok"] is False
+    assert set(same_terminal_response["data"]["terminal_operations"]) == {"one"}
+    assert other_terminal_response["ok"] is True
+    wait_for_lifecycle(bridge, close_response)
+
+
+def test_distinct_terminal_closes_are_queued_without_global_rejection(tmp_path: Path) -> None:
+    bridge, terminal_manager, worker_manager = build_bridge(tmp_path, ["one", "two"])
+    terminal_manager.open_ids.update({"one", "two"})
+    worker_manager.running_ids.update({"one", "two"})
+    worker_manager.stop_delay = 0.1
+
+    first_response_text = bridge.stopTerminal("one")
+    second_response_text = bridge.stopTerminal("two")
+    first_ack = json.loads(first_response_text)
+    second_ack = json.loads(second_response_text)
+
+    assert first_ack["ok"] is True
+    assert second_ack["ok"] is True
+    assert first_ack["data"]["operation_id"] != second_ack["data"]["operation_id"]
+    assert bridge.terminal_lifecycle_busy("one") is True
+    assert bridge.terminal_lifecycle_busy("two") is True
+    wait_for_lifecycle(bridge, first_response_text)
+    wait_for_lifecycle(bridge, second_response_text)
+    assert terminal_manager.open_ids == set()
+    assert worker_manager.running_ids == set()
+
+
+def test_other_worker_events_continue_during_individual_close(tmp_path: Path) -> None:
+    bridge, terminal_manager, worker_manager = build_bridge(tmp_path, ["one", "two"])
+    terminal_manager.open_ids.update({"one", "two"})
+    worker_manager.running_ids.update({"one", "two"})
+    worker_manager.stop_delay = 0.2
+
+    close_response = bridge.stopTerminal("one")
+    worker_manager.events.append(
+        {
+            "terminal_id": "two",
+            "event": "status",
+            "data": {"state": "connected", "alive": True, "connected": True},
+        }
+    )
+    emitted_before = len(bridge.workerStatesChanged.values)
+
+    bridge.poll_worker_events()
+
+    assert worker_manager.events == []
+    assert len(bridge.workerStatesChanged.values) == emitted_before + 1
+    published = json.loads(bridge.workerStatesChanged.values[-1])
+    assert published["two"]["connected"] is True
+    wait_for_lifecycle(bridge, close_response)
 
 
 def test_app_shutdown_publishes_closing_and_stopping_for_all_active_terminals(

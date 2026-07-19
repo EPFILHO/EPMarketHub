@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import threading
+from collections import deque
 from collections.abc import Callable
 from typing import Any
 
@@ -23,22 +24,33 @@ class SerializedLifecycleExecutor(QObject):
     def __init__(self, parent: QObject | None = None) -> None:
         super().__init__(parent)
         self._lock = threading.Lock()
-        self._active_operation_id: str | None = None
+        self._queued_operation_ids: set[str] = set()
+        self._tasks: deque[tuple[str, LifecycleTask]] = deque()
         self._thread: threading.Thread | None = None
 
     def start(self, operation_id: str, task: LifecycleTask) -> bool:
         with self._lock:
-            if self._active_operation_id is not None:
+            if operation_id in self._queued_operation_ids:
                 return False
-            self._active_operation_id = operation_id
-            self._thread = threading.Thread(
-                target=self._run,
-                args=(operation_id, task),
-                name=f"EP-MarketHub-Lifecycle-{operation_id[:8]}",
-                daemon=False,
-            )
-            self._thread.start()
+            self._queued_operation_ids.add(operation_id)
+            self._tasks.append((operation_id, task))
+            if self._thread is None:
+                self._thread = threading.Thread(
+                    target=self._drain,
+                    name="EP-MarketHub-Lifecycle",
+                    daemon=False,
+                )
+                self._thread.start()
         return True
+
+    def _drain(self) -> None:
+        while True:
+            with self._lock:
+                if not self._tasks:
+                    self._thread = None
+                    return
+                operation_id, task = self._tasks.popleft()
+            self._run(operation_id, task)
 
     def _run(self, operation_id: str, task: LifecycleTask) -> None:
         def publish_progress(payload: dict[str, Any]) -> None:
@@ -62,6 +74,5 @@ class SerializedLifecycleExecutor(QObject):
             }
         finally:
             with self._lock:
-                self._active_operation_id = None
-                self._thread = None
+                self._queued_operation_ids.discard(operation_id)
         self.finished.emit(json.dumps(payload, ensure_ascii=False))
