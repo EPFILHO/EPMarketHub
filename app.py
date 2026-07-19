@@ -80,7 +80,6 @@ def main() -> int:
         worker_manager=worker_manager,
         web_dir=paths.root_dir / "web",
     )
-    app.aboutToQuit.connect(window.shutdown)
     window.show()
     return app.exec()
 

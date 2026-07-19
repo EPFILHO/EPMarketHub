@@ -1,5 +1,6 @@
 import json
 import sys
+import time
 from pathlib import Path
 from types import ModuleType
 
@@ -12,9 +13,15 @@ from core.worker_protocol import WorkerState
 class BoundSignal:
     def __init__(self) -> None:
         self.values = []
+        self.callbacks = []
+
+    def connect(self, callback, *args) -> None:
+        self.callbacks.append(callback)
 
     def emit(self, value) -> None:
         self.values.append(value)
+        for callback in list(self.callbacks):
+            callback(value)
 
 
 class SignalDescriptor:
@@ -53,6 +60,8 @@ class FakeQTimer:
     @staticmethod
     def singleShot(interval, callback) -> None:
         FakeQTimer.single_shots.append((interval, callback))
+        if interval == 0:
+            callback()
 
 
 class FakeQCoreApplication:
@@ -79,6 +88,11 @@ class FakeQEvent:
         WindowStateChange = object()
 
 
+class FakeQt:
+    class ConnectionType:
+        QueuedConnection = object()
+
+
 def install_qt_stubs() -> None:
     pyside = ModuleType("PySide6")
     pyside.__path__ = []
@@ -89,6 +103,7 @@ def install_qt_stubs() -> None:
     qtcore.QObject = FakeQObject
     qtcore.QTimer = FakeQTimer
     qtcore.QUrl = FakeQUrl
+    qtcore.Qt = FakeQt
     qtcore.Signal = SignalDescriptor
     qtcore.Slot = slot
 
@@ -226,6 +241,8 @@ class FakeWorkerManager:
         self.events = []
         self.forgotten = []
         self.stopping_ids = set()
+        self.shutdown_finished = False
+        self.stop_delay = 0.0
 
     def active_count(self) -> int:
         return len(self.running_ids)
@@ -244,6 +261,8 @@ class FakeWorkerManager:
 
     def stop_worker(self, terminal_id: str) -> tuple[bool, str]:
         self.stopped.append(terminal_id)
+        if self.stop_delay:
+            time.sleep(self.stop_delay)
         was_running = terminal_id in self.running_ids
         if terminal_id in self.failed_stop_ids:
             return False, "Não foi possível confirmar o encerramento do worker."
@@ -277,11 +296,21 @@ class FakeWorkerManager:
     def live_streams_payload(self) -> dict:
         return {}
 
+    def snapshots_payload(self) -> dict:
+        return {}
+
     def clear_live_streams_for_terminal(self, terminal_id: str) -> int:
         return 0
 
+    def clear_all_live_streams(self) -> None:
+        return None
+
     def forget_terminal(self, terminal_id: str) -> None:
         self.forgotten.append(terminal_id)
+
+    def finish_shutdown(self) -> bool:
+        self.shutdown_finished = not self.running_ids
+        return self.shutdown_finished
 
 
 def make_profile(tmp_path: Path, terminal_id: str) -> TerminalProfile:
@@ -311,6 +340,20 @@ def build_bridge(tmp_path: Path, terminal_ids: list[str], max_workers: int = 3):
         worker_manager=worker_manager,
     )
     return bridge, terminal_manager, worker_manager
+
+
+def wait_for_lifecycle(bridge: MarketHubBridge, response_text: str, timeout: float = 2.0) -> dict:
+    response = json.loads(response_text)
+    assert response["ok"] is True
+    operation_id = response["data"]["operation_id"]
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        for payload_text in bridge.lifecycleFinished.values:
+            payload = json.loads(payload_text)
+            if payload.get("operation_id") == operation_id:
+                return payload
+        time.sleep(0.005)
+    raise AssertionError(f"Operação {operation_id} não terminou dentro do prazo")
 
 
 def test_start_selected_workers_opens_only_requested_terminals(tmp_path: Path) -> None:
@@ -562,7 +605,10 @@ def test_close_selected_terminals_stops_only_requested_terminal(tmp_path: Path) 
     terminal_manager.open_ids.update({"one", "two", "three"})
     worker_manager.running_ids.update({"one", "two", "three"})
 
-    response = json.loads(bridge.closeSelectedTerminals('["two"]'))
+    response = wait_for_lifecycle(
+        bridge,
+        bridge.closeSelectedTerminals('["two"]'),
+    )
 
     assert response["ok"] is True
     assert terminal_manager.open_ids == {"one", "three"}
@@ -576,11 +622,11 @@ def test_stop_terminal_distinguishes_close_failure_from_already_closed(tmp_path:
     terminal_manager.open_ids.add("one")
     terminal_manager.failed_stop_ids.add("one")
 
-    response = json.loads(bridge.stopTerminal("one"))
+    response = wait_for_lifecycle(bridge, bridge.stopTerminal("one"))
     terminal = json.loads(bridge.getTerminals())["data"][0]
 
     assert response["ok"] is False
-    assert response["data"]["mt5_running"] is True
+    assert response["data"]["results"]["one"]["mt5_running"] is True
     assert terminal["process_state"] == "close_failed"
 
 
@@ -588,15 +634,22 @@ def test_stop_terminal_publishes_closing_before_blocking_operation(tmp_path: Pat
     bridge, terminal_manager, worker_manager = build_bridge(tmp_path, ["one"])
     terminal_manager.open_ids.add("one")
     worker_manager.running_ids.add("one")
+    worker_manager.stop_delay = 0.2
     previous_calls = FakeQCoreApplication.process_events_calls
 
-    bridge.stopTerminal("one")
+    started_at = time.monotonic()
+    response_text = bridge.stopTerminal("one")
+    returned_after = time.monotonic() - started_at
 
+    assert returned_after < 0.1
     assert FakeQCoreApplication.process_events_calls == previous_calls + 1
-    published = json.loads(bridge.terminalsChanged.values[-2])[0]
+    published = json.loads(bridge.terminalsChanged.values[0])[0]
     assert published["process_state"] == "closing"
     worker_states = json.loads(bridge.workerStatesChanged.values[-1])
     assert worker_states["one"]["state"] == "stopping"
+    cached = json.loads(bridge.getTerminals())["data"][0]
+    assert cached["process_state"] == "closing"
+    wait_for_lifecycle(bridge, response_text)
 
 
 def test_app_shutdown_publishes_closing_and_stopping_for_all_active_terminals(
@@ -619,7 +672,7 @@ def test_late_worker_event_does_not_hide_terminal_close_failure(tmp_path: Path) 
     terminal_manager.open_ids.add("one")
     terminal_manager.failed_stop_ids.add("one")
 
-    bridge.stopTerminal("one")
+    wait_for_lifecycle(bridge, bridge.stopTerminal("one"))
     worker_manager.events.append(
         {
             "terminal_id": "one",
@@ -639,13 +692,88 @@ def test_close_selected_reports_worker_that_resists_shutdown(tmp_path: Path) -> 
     worker_manager.running_ids.update({"one", "two"})
     worker_manager.failed_stop_ids.add("one")
 
-    response = json.loads(bridge.closeSelectedTerminals('["one", "two"]'))
+    response = wait_for_lifecycle(
+        bridge,
+        bridge.closeSelectedTerminals('["one", "two"]'),
+    )
 
     assert response["ok"] is False
-    assert "1 falha" in response["message"]
+    assert response["data"]["results"]["one"]["ok"] is False
+    assert response["data"]["results"]["two"]["ok"] is True
     assert worker_manager.running_ids == {"one"}
     assert terminal_manager.open_ids == {"one"}
     assert terminal_manager.stopped == ["two"]
+
+
+def test_close_selected_emits_progress_for_each_terminal(tmp_path: Path) -> None:
+    bridge, terminal_manager, worker_manager = build_bridge(tmp_path, ["one", "two"])
+    terminal_manager.open_ids.update({"one", "two"})
+    worker_manager.running_ids.update({"one", "two"})
+
+    response = wait_for_lifecycle(
+        bridge,
+        bridge.closeSelectedTerminals('["one", "two"]'),
+    )
+    progress = [json.loads(value) for value in bridge.lifecycleProgress.values]
+
+    assert response["ok"] is True
+    assert [(item["index"], item["total"]) for item in progress] == [(1, 2), (2, 2)]
+    assert [item["terminal"]["terminal_id"] for item in progress] == ["one", "two"]
+
+
+def test_application_shutdown_returns_before_blocking_worker_and_keeps_cached_getters(
+    tmp_path: Path,
+) -> None:
+    bridge, terminal_manager, worker_manager = build_bridge(tmp_path, ["one"])
+    terminal_manager.open_ids.add("one")
+    worker_manager.running_ids.add("one")
+    worker_manager.stop_delay = 0.2
+
+    started_at = time.monotonic()
+    response_text = bridge.shutdownApplication()
+    returned_after = time.monotonic() - started_at
+    getter_started_at = time.monotonic()
+    cached = json.loads(bridge.getTerminals())["data"][0]
+    getter_returned_after = time.monotonic() - getter_started_at
+
+    assert returned_after < 0.1
+    assert getter_returned_after < 0.1
+    assert cached["process_state"] == "closing"
+    response = wait_for_lifecycle(bridge, response_text)
+    assert response["ok"] is True
+    assert worker_manager.shutdown_finished is True
+
+
+def test_shutdown_without_workers_is_immediate_and_idempotent(tmp_path: Path) -> None:
+    bridge, terminal_manager, worker_manager = build_bridge(tmp_path, [])
+
+    response = wait_for_lifecycle(bridge, bridge.shutdownApplication())
+    repeated = json.loads(bridge.shutdownApplication())
+
+    assert response["ok"] is True
+    assert response["data"]["results"] == {}
+    assert repeated["ok"] is True
+    assert "já foi concluído" in repeated["message"]
+    assert terminal_manager.stopped == []
+    assert worker_manager.stopped == []
+
+
+def test_late_lifecycle_progress_is_discarded(tmp_path: Path) -> None:
+    bridge, _, _ = build_bridge(tmp_path, [])
+    response = wait_for_lifecycle(bridge, bridge.shutdownApplication())
+    emitted_before = len(bridge.lifecycleProgress.values)
+
+    bridge._forward_lifecycle_progress(
+        json.dumps(
+            {
+                "operation_id": response["operation_id"],
+                "kind": "application_shutdown",
+                "terminal": {"terminal_id": "old", "mt5_running": True},
+            }
+        )
+    )
+
+    assert len(bridge.lifecycleProgress.values) == emitted_before
 
 
 def test_stop_worker_reports_resistant_process_as_failure(tmp_path: Path) -> None:
@@ -653,11 +781,11 @@ def test_stop_worker_reports_resistant_process_as_failure(tmp_path: Path) -> Non
     worker_manager.running_ids.add("one")
     worker_manager.failed_stop_ids.add("one")
 
-    response = json.loads(bridge.stopWorker("one"))
+    response = wait_for_lifecycle(bridge, bridge.stopWorker("one"))
 
     assert response["ok"] is False
-    assert "confirmar" in response["message"]
-    assert response["data"]["alive"] is True
+    assert "confirmar" in response["data"]["results"]["one"]["worker_message"]
+    assert response["data"]["results"]["one"]["worker_running"] is True
 
 
 def test_create_terminal_rejects_duplicate_broker_and_account(tmp_path: Path) -> None:
@@ -915,10 +1043,10 @@ def test_stop_terminal_reports_worker_that_remains_alive(tmp_path: Path) -> None
     worker_manager.running_ids.add("one")
     worker_manager.failed_stop_ids.add("one")
 
-    response = json.loads(bridge.stopTerminal("one"))
+    response = wait_for_lifecycle(bridge, bridge.stopTerminal("one"))
 
     assert response["ok"] is False
-    assert response["data"]["worker_running"] is True
+    assert response["data"]["results"]["one"]["worker_running"] is True
     assert terminal_manager.open_ids == {"one"}
     assert terminal_manager.stopped == []
     assert worker_manager.running_ids == {"one"}
@@ -1044,9 +1172,22 @@ class CloseRequestEvent:
 class CloseTransitionBridge:
     def __init__(self) -> None:
         self.publish_calls = 0
+        self.shutdown_calls = 0
+        self.lifecycle_busy = False
 
     def publish_shutdown_transitions(self) -> None:
         self.publish_calls += 1
+
+    def shutdownApplication(self) -> str:
+        self.shutdown_calls += 1
+        self.lifecycle_busy = True
+        return json.dumps(
+            {
+                "ok": True,
+                "message": "Operação iniciada.",
+                "data": {"operation_id": "shutdown-one", "kind": "application_shutdown"},
+            }
+        )
 
 
 class CloseTransitionPage:
@@ -1077,6 +1218,7 @@ def test_close_event_keeps_window_visible_until_badges_are_painted() -> None:
     window = MainWindow.__new__(MainWindow)
     window._shutdown_done = False
     window._close_requested = False
+    window._shutdown_started = False
     window.worker_poll_timer = CountingTimer()
     window.bridge = CloseTransitionBridge()
     window.web_view = CloseTransitionWebView()
@@ -1084,44 +1226,55 @@ def test_close_event_keeps_window_visible_until_badges_are_painted() -> None:
     FakeQTimer.single_shots.clear()
 
     window.closeEvent(event)
+    repeated_event = CloseRequestEvent()
+    window.closeEvent(repeated_event)
 
     assert event.ignored is True
     assert event.accepted is False
+    assert repeated_event.ignored is True
     assert window.bridge.publish_calls == 1
     assert "showShutdownTransitions()" in window.web_view.page().scripts[-1]
     assert window.web_view.update_calls == 1
     assert window.web_view.repaint_calls == 1
     assert FakeQTimer.single_shots[-1][0] == 150
+    assert len(FakeQTimer.single_shots) == 1
 
 
 def test_main_window_shutdown_is_idempotent() -> None:
     window = MainWindow.__new__(MainWindow)
     window._shutdown_done = False
+    window._close_requested = False
+    window._shutdown_started = False
     window.worker_poll_timer = CountingTimer()
-    window.worker_manager = CountingWorkerManager()
-    window.terminal_manager = CountingTerminalManager()
-    window.terminal_registry = StaticRegistry()
+    window.bridge = CloseTransitionBridge()
 
     window.shutdown()
     window.shutdown()
 
     assert window.worker_poll_timer.stop_calls == 1
-    assert window.worker_manager.clear_calls == 1
-    assert window.worker_manager.stop_calls == 1
-    assert window.terminal_manager.stop_calls == 1
+    assert window.bridge.shutdown_calls == 1
+    assert window._shutdown_done is False
 
 
-def test_main_window_shutdown_continues_after_worker_failures() -> None:
+def test_main_window_closes_only_after_explicit_shutdown_failure() -> None:
     window = MainWindow.__new__(MainWindow)
     window._shutdown_done = False
-    window.worker_poll_timer = CountingTimer()
-    window.worker_manager = FailingShutdownWorkerManager()
-    window.terminal_manager = CountingTerminalManager()
-    window.terminal_registry = StaticRegistry()
+    window._close_requested = True
+    window._shutdown_started = True
+    close_calls = []
+    window.close = lambda: close_calls.append(True)
 
-    window.shutdown()
+    window._on_lifecycle_finished(
+        json.dumps(
+            {
+                "operation_id": "shutdown-one",
+                "kind": "application_shutdown",
+                "ok": False,
+                "message": "worker resistente",
+                "data": {"results": {"one": {"ok": False}}},
+            }
+        )
+    )
 
-    assert window.worker_poll_timer.stop_calls == 1
-    assert window.worker_manager.clear_calls == 1
-    assert window.worker_manager.stop_calls == 1
-    assert window.terminal_manager.stop_calls == 1
+    assert window._shutdown_done is True
+    assert close_calls == [True]

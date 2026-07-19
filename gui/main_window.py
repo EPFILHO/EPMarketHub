@@ -12,6 +12,7 @@ from PySide6.QtCore import (
     QEvent,
     QEventLoop,
     QObject,
+    Qt,
     QTimer,
     QUrl,
     Signal,
@@ -37,6 +38,7 @@ from core.worker_protocol import (
     WORKER_IMMEDIATE_STATE_EVENT_TYPES,
     WORKER_STATE_EVENT_TYPES,
 )
+from gui.lifecycle_executor import SerializedLifecycleExecutor
 
 logger = logging.getLogger(__name__)
 
@@ -57,6 +59,8 @@ class MarketHubBridge(QObject):
     snapshotChanged = Signal(str)
     liveTickChanged = Signal(str)
     liveStreamStatusChanged = Signal(str)
+    lifecycleProgress = Signal(str)
+    lifecycleFinished = Signal(str)
 
     def __init__(
         self,
@@ -71,11 +75,29 @@ class MarketHubBridge(QObject):
         self.terminal_manager = terminal_manager
         self.worker_manager = worker_manager
         self.process_states = TerminalProcessStateMachine()
+        self._lifecycle_executor = SerializedLifecycleExecutor(self)
+        self._lifecycle_executor.progress.connect(
+            self._forward_lifecycle_progress,
+            Qt.ConnectionType.QueuedConnection,
+        )
+        self._lifecycle_executor.finished.connect(
+            self._finish_lifecycle_operation,
+            Qt.ConnectionType.QueuedConnection,
+        )
+        self._active_lifecycle_id: str | None = None
+        self._active_lifecycle_kind: str | None = None
+        self._completed_shutdown: dict | None = None
+        self._cached_terminals: list[dict] = []
+        self._cached_worker_states: list[dict] = []
+        self._cached_snapshots: dict = {}
+        self._cached_live_streams: dict = {}
+        self._cached_runtime_limits: dict = {}
 
         self._last_worker_state_emit = 0.0
         self._normalize_registered_instance_names()
         for profile in self.terminal_registry.list():
             self.terminal_manager.remember(profile)
+        self._refresh_lifecycle_cache()
 
     @property
     def max_active_mt5(self) -> int:
@@ -203,14 +225,39 @@ class MarketHubBridge(QObject):
         return rows
 
     def _emit_terminals(self) -> None:
-        self.terminalsChanged.emit(json.dumps(self._terminals_payload(), ensure_ascii=False))
+        payload = self._terminals_payload()
+        self._cached_terminals = payload
+        self.terminalsChanged.emit(json.dumps(payload, ensure_ascii=False))
+
+    def _worker_states_payload(self) -> list[dict]:
+        return self.worker_manager.states_payload(
+            [terminal.id for terminal in self.terminal_registry.list()]
+        )
+
+    def _emit_worker_states(self) -> None:
+        payload = self._worker_states_payload()
+        self._cached_worker_states = payload
+        self.workerStatesChanged.emit(json.dumps(payload, ensure_ascii=False))
+
+    def _refresh_lifecycle_cache(self) -> None:
+        self._cached_terminals = self._terminals_payload()
+        self._cached_worker_states = self._worker_states_payload()
+        self._cached_snapshots = self.worker_manager.snapshots_payload()
+        self._cached_live_streams = self.worker_manager.live_streams_payload()
+        self._cached_runtime_limits = self._runtime_limits_payload()
+
+    def _runtime_limits_payload(self) -> dict:
+        return {
+            "max_active_mt5": self.max_active_mt5,
+            "registered": len(self.terminal_registry.list()),
+            "open_mt5": self._running_mt5_count(),
+            "active_workers": self.worker_manager.active_count(),
+        }
 
     def _publish_terminal_transition(self) -> None:
         """Entrega a transição ao QWebEngine antes de uma operação bloqueante."""
 
-        terminal_ids = [profile.id for profile in self.terminal_registry.list()]
-        states = self.worker_manager.states_payload(terminal_ids)
-        self.workerStatesChanged.emit(json.dumps(states, ensure_ascii=False))
+        self._emit_worker_states()
         self._emit_terminals()
         QCoreApplication.processEvents(QEventLoop.ProcessEventsFlag.ExcludeUserInputEvents)
 
@@ -227,12 +274,292 @@ class MarketHubBridge(QObject):
         if changed:
             self._publish_terminal_transition()
 
-    def _emit_live_streams(self) -> None:
-        self.liveStreamStatusChanged.emit(
-            json.dumps(self.worker_manager.live_streams_payload(), ensure_ascii=False)
+    @property
+    def lifecycle_busy(self) -> bool:
+        return self._active_lifecycle_id is not None
+
+    def _lifecycle_busy_response(self) -> str:
+        return fail(
+            "Aguarde a operação de encerramento atual terminar.",
+            {
+                "operation_id": self._active_lifecycle_id,
+                "kind": self._active_lifecycle_kind,
+            },
         )
 
+    def _stop_profile_blocking(
+        self,
+        profile: TerminalProfile,
+        *,
+        close_mt5: bool,
+    ) -> dict:
+        terminal_id = profile.id
+        worker_message = "A leitura deste terminal já está parada."
+        worker_error = ""
+        if close_mt5:
+            try:
+                self.worker_manager.clear_live_streams_for_terminal(terminal_id)
+            except Exception as exc:
+                worker_error = f"Falha ao limpar fluxos: {exc}"
+                logger.exception("Falha ao limpar fluxos do terminal %s", terminal_id)
+        try:
+            _, worker_message = self.worker_manager.stop_worker(terminal_id)
+        except Exception as exc:
+            worker_error = f"{worker_error}; {exc}" if worker_error else str(exc)
+            worker_message = f"Falha ao encerrar worker: {exc}"
+            logger.exception("Falha ao encerrar worker %s", terminal_id)
+
+        try:
+            worker_running = self.worker_manager.is_running(terminal_id)
+        except Exception as exc:
+            worker_running = True
+            worker_error = f"{worker_error}; {exc}" if worker_error else str(exc)
+            logger.exception("Falha ao confirmar worker %s", terminal_id)
+        mt5_stopped = False
+        terminal_error = ""
+        if close_mt5 and not worker_running:
+            try:
+                mt5_stopped = self.terminal_manager.stop(
+                    terminal_id,
+                    profile=profile,
+                )
+            except Exception as exc:
+                terminal_error = str(exc)
+                logger.exception("Falha ao encerrar MT5 %s", terminal_id)
+
+        try:
+            mt5_running = self.terminal_manager.is_running(terminal_id, profile)
+        except Exception as exc:
+            mt5_running = True
+            terminal_error = f"{terminal_error}; {exc}" if terminal_error else str(exc)
+            logger.exception("Falha ao confirmar MT5 %s", terminal_id)
+        operation_ok = (
+            not worker_running
+            and not worker_error
+            and (not close_mt5 or (not mt5_running and not terminal_error))
+        )
+        if close_mt5:
+            if operation_ok:
+                message = "MT5 fechado." if mt5_stopped else "O MT5 já estava fechado."
+            else:
+                message = (
+                    f"MT5 {'ainda aberto' if mt5_running else 'fechado'}, "
+                    f"worker {'ainda vivo' if worker_running else 'encerrado'}: "
+                    f"{worker_message}"
+                )
+        else:
+            message = worker_message
+
+        return {
+            "terminal_id": terminal_id,
+            "ok": operation_ok,
+            "message": message,
+            "worker_message": worker_message,
+            "worker_error": worker_error,
+            "worker_running": worker_running,
+            "mt5_stopped": mt5_stopped,
+            "mt5_running": mt5_running,
+            "terminal_error": terminal_error,
+        }
+
+    def _build_lifecycle_task(
+        self,
+        kind: str,
+        profiles: list[TerminalProfile],
+        *,
+        close_mt5: bool,
+        application_shutdown: bool,
+    ):
+        def task(report_progress) -> dict:
+            results: dict[str, dict] = {}
+            setup_errors: list[str] = []
+            if application_shutdown:
+                try:
+                    self.worker_manager.clear_all_live_streams()
+                except Exception as exc:
+                    setup_errors.append(f"Falha ao limpar fluxos: {exc}")
+                    logger.exception("Falha ao limpar fluxos durante encerramento")
+
+            total = len(profiles)
+            for index, profile in enumerate(profiles, start=1):
+                try:
+                    result = self._stop_profile_blocking(profile, close_mt5=close_mt5)
+                except Exception as exc:
+                    logger.exception("Falha inesperada ao processar terminal %s", profile.id)
+                    result = {
+                        "terminal_id": profile.id,
+                        "ok": False,
+                        "message": f"Falha inesperada ao encerrar terminal: {exc}",
+                        "worker_message": str(exc),
+                        "worker_error": str(exc),
+                        "worker_running": True,
+                        "mt5_stopped": False,
+                        "mt5_running": True,
+                        "terminal_error": str(exc),
+                    }
+                results[profile.id] = result
+                report_progress(
+                    {
+                        "kind": kind,
+                        "index": index,
+                        "total": total,
+                        "terminal": result,
+                    }
+                )
+
+            supervisor_finished = True
+            if application_shutdown:
+                finish_shutdown = getattr(self.worker_manager, "finish_shutdown", None)
+                if finish_shutdown is not None:
+                    try:
+                        supervisor_finished = bool(finish_shutdown())
+                    except Exception as exc:
+                        supervisor_finished = False
+                        setup_errors.append(f"Falha ao finalizar supervisor: {exc}")
+                        logger.exception("Falha ao finalizar supervisor de workers")
+
+            failures = [result for result in results.values() if not result["ok"]]
+            operation_ok = not failures and not setup_errors and supervisor_finished
+            if operation_ok:
+                if application_shutdown:
+                    message = "Workers e MT5 controlados encerrados."
+                elif close_mt5:
+                    message = "Terminal encerrado." if total == 1 else "Terminais selecionados fechados."
+                else:
+                    message = "Leitura encerrada." if total == 1 else "Todas as leituras foram encerradas."
+            else:
+                message = f"Encerramento concluído com {len(failures)} falha(s)."
+                if setup_errors or not supervisor_finished:
+                    message = "O encerramento produziu uma falha explícita no supervisor."
+
+            return {
+                "kind": kind,
+                "ok": operation_ok,
+                "message": message,
+                "data": {
+                    "results": results,
+                    "errors": setup_errors,
+                    "supervisor_finished": supervisor_finished,
+                },
+            }
+
+        return task
+
+    def _start_lifecycle_operation(
+        self,
+        kind: str,
+        profiles: list[TerminalProfile],
+        *,
+        close_mt5: bool,
+        application_shutdown: bool = False,
+    ) -> str:
+        if application_shutdown and self._completed_shutdown is not None:
+            return ok(self._completed_shutdown, "O encerramento da aplicação já foi concluído.")
+        if self.lifecycle_busy:
+            if application_shutdown and self._active_lifecycle_kind == "application_shutdown":
+                return ok(
+                    {
+                        "operation_id": self._active_lifecycle_id,
+                        "kind": self._active_lifecycle_kind,
+                    },
+                    "O encerramento da aplicação já está em andamento.",
+                )
+            return self._lifecycle_busy_response()
+
+        unique_profiles = list({profile.id: profile for profile in profiles}.values())
+        operation_id = uuid4().hex
+        self._active_lifecycle_id = operation_id
+        self._active_lifecycle_kind = kind
+
+        changed = False
+        for profile in unique_profiles:
+            if close_mt5 and self.terminal_manager.is_running(profile.id, profile):
+                self.process_states.set(profile.id, ProcessState.CLOSING)
+                changed = True
+            if self.worker_manager.mark_stopping(profile.id):
+                changed = True
+        if changed:
+            self._publish_terminal_transition()
+        else:
+            self._refresh_lifecycle_cache()
+
+        task = self._build_lifecycle_task(
+            kind,
+            unique_profiles,
+            close_mt5=close_mt5,
+            application_shutdown=application_shutdown,
+        )
+        if not self._lifecycle_executor.start(operation_id, task):
+            self._active_lifecycle_id = None
+            self._active_lifecycle_kind = None
+            return fail("Não foi possível iniciar a operação de encerramento.")
+        return ok(
+            {"operation_id": operation_id, "kind": kind},
+            "Operação de encerramento iniciada.",
+        )
+
+    @Slot(str)
+    def _forward_lifecycle_progress(self, payload_json: str) -> None:
+        try:
+            payload = json.loads(payload_json)
+        except json.JSONDecodeError:
+            logger.exception("Progresso inválido recebido do executor de encerramento")
+            return
+        if payload.get("operation_id") != self._active_lifecycle_id:
+            logger.warning("Progresso tardio de encerramento descartado: %s", payload_json)
+            return
+        self.lifecycleProgress.emit(payload_json)
+
+    @Slot(str)
+    def _finish_lifecycle_operation(self, payload_json: str) -> None:
+        try:
+            payload = json.loads(payload_json)
+        except json.JSONDecodeError:
+            logger.exception("Resultado inválido recebido do executor de encerramento")
+            return
+        if payload.get("operation_id") != self._active_lifecycle_id:
+            logger.warning("Conclusão tardia de encerramento descartada: %s", payload_json)
+            return
+
+        kind = str(payload.get("kind") or self._active_lifecycle_kind or "")
+        results = payload.get("data", {}).get("results", {})
+        close_mt5 = kind in {"close_terminal", "close_selected", "application_shutdown"}
+        for terminal_id, result in results.items():
+            if close_mt5:
+                if result.get("worker_running") or result.get("mt5_running"):
+                    self.process_states.set(terminal_id, ProcessState.CLOSE_FAILED)
+                else:
+                    self.process_states.clear(terminal_id)
+            else:
+                self.process_states.complete_startup(terminal_id)
+
+        self._active_lifecycle_id = None
+        self._active_lifecycle_kind = None
+        if kind == "application_shutdown":
+            self._completed_shutdown = payload
+        self._emit_worker_states()
+        self._emit_terminals()
+        self._emit_live_streams()
+        self._cached_snapshots = self.worker_manager.snapshots_payload()
+        self.lifecycleFinished.emit(json.dumps(payload, ensure_ascii=False))
+
+    @Slot(result=str)
+    def shutdownApplication(self) -> str:
+        return self._start_lifecycle_operation(
+            "application_shutdown",
+            self.terminal_registry.list(),
+            close_mt5=True,
+            application_shutdown=True,
+        )
+
+    def _emit_live_streams(self) -> None:
+        payload = self.worker_manager.live_streams_payload()
+        self._cached_live_streams = payload
+        self.liveStreamStatusChanged.emit(json.dumps(payload, ensure_ascii=False))
+
     def poll_worker_events(self) -> None:
+        if self._active_lifecycle_id is not None:
+            return
         events = self.worker_manager.poll_events()
         if not events:
             return
@@ -272,7 +599,14 @@ class MarketHubBridge(QObject):
                 ):
                     instance_status = self.terminal_manager.instance_status(profile)
                     if not instance_status["ready"]:
-                        self.worker_manager.stop_worker(terminal_id)
+                        QTimer.singleShot(
+                            0,
+                            lambda profile=profile: self._start_lifecycle_operation(
+                                "reconcile_worker_stop",
+                                [profile],
+                                close_mt5=False,
+                            ),
+                        )
                         self.process_states.clear(terminal_id)
                         should_emit_terminals = True
                         should_emit_live = True
@@ -311,8 +645,7 @@ class MarketHubBridge(QObject):
         if should_emit_state:
             now = time.monotonic()
             if force_state_emit or now - self._last_worker_state_emit >= 0.35:
-                states = self.worker_manager.states_payload([t.id for t in self.terminal_registry.list()])
-                self.workerStatesChanged.emit(json.dumps(states, ensure_ascii=False))
+                self._emit_worker_states()
                 self._last_worker_state_emit = now
         if should_emit_live:
             self._emit_live_streams()
@@ -321,21 +654,29 @@ class MarketHubBridge(QObject):
 
     @Slot(result=str)
     def getTerminals(self) -> str:
+        if self._active_lifecycle_id is not None:
+            return ok(self._cached_terminals)
         self.poll_worker_events()
         return ok(self._terminals_payload())
 
     @Slot(result=str)
     def getWorkerStates(self) -> str:
+        if self._active_lifecycle_id is not None:
+            return ok(self._cached_worker_states)
         self.poll_worker_events()
-        return ok(self.worker_manager.states_payload([t.id for t in self.terminal_registry.list()]))
+        return ok(self._worker_states_payload())
 
     @Slot(result=str)
     def getSnapshots(self) -> str:
+        if self._active_lifecycle_id is not None:
+            return ok(self._cached_snapshots)
         self.poll_worker_events()
         return ok(self.worker_manager.snapshots_payload())
 
     @Slot(result=str)
     def getLiveStreams(self) -> str:
+        if self._active_lifecycle_id is not None:
+            return ok(self._cached_live_streams)
         self.poll_worker_events()
         return ok(self.worker_manager.live_streams_payload())
 
@@ -349,12 +690,9 @@ class MarketHubBridge(QObject):
 
     @Slot(result=str)
     def getRuntimeLimits(self) -> str:
-        return ok({
-            "max_active_mt5": self.max_active_mt5,
-            "registered": len(self.terminal_registry.list()),
-            "open_mt5": self._running_mt5_count(),
-            "active_workers": self.worker_manager.active_count(),
-        })
+        if self._active_lifecycle_id is not None:
+            return ok(self._cached_runtime_limits)
+        return ok(self._runtime_limits_payload())
 
     @staticmethod
     def _validate_terminal_fields(label: str, broker_name: str, account_login: str) -> str | None:
@@ -368,6 +706,8 @@ class MarketHubBridge(QObject):
 
     @Slot(str, str, str, result=str)
     def createTerminal(self, label: str, broker_name: str, account_login: str) -> str:
+        if self.lifecycle_busy:
+            return self._lifecycle_busy_response()
         try:
             validation = self._validate_terminal_fields(label, broker_name, account_login)
             if validation:
@@ -438,6 +778,8 @@ class MarketHubBridge(QObject):
 
     @Slot(str, str, str, result=str)
     def adoptTerminalInstance(self, label: str, broker_name: str, account_login: str) -> str:
+        if self.lifecycle_busy:
+            return self._lifecycle_busy_response()
         validation = self._validate_terminal_fields(label, broker_name, account_login)
         if validation:
             return fail(validation)
@@ -504,6 +846,8 @@ class MarketHubBridge(QObject):
         broker_name: str,
         account_login: str,
     ) -> str:
+        if self.lifecycle_busy:
+            return self._lifecycle_busy_response()
         profile = self.terminal_registry.get(terminal_id)
         if not profile:
             return fail("Terminal não encontrado.")
@@ -587,6 +931,8 @@ class MarketHubBridge(QObject):
     def launchTerminal(self, terminal_id: str) -> str:
         """Abre a instância controlada e inicia sua leitura persistente."""
 
+        if self.lifecycle_busy:
+            return self._lifecycle_busy_response()
         try:
             profile = self.terminal_registry.get(terminal_id)
             if not profile:
@@ -642,50 +988,19 @@ class MarketHubBridge(QObject):
 
     @Slot(str, result=str)
     def stopTerminal(self, terminal_id: str) -> str:
-        try:
-            profile = self.terminal_registry.get(terminal_id)
-            if not profile:
-                return fail("Terminal não encontrado.")
-            self.process_states.set(terminal_id, ProcessState.CLOSING)
-            self.worker_manager.mark_stopping(terminal_id)
-            self._publish_terminal_transition()
-            _, worker_message = self.worker_manager.stop_worker(terminal_id)
-            worker_still_running = self.worker_manager.is_running(terminal_id)
-            stopped = (
-                False
-                if worker_still_running
-                else self.terminal_manager.stop(terminal_id, profile=profile)
-            )
-            terminal_still_running = self.terminal_manager.is_running(terminal_id, profile)
-            if worker_still_running or terminal_still_running:
-                self.process_states.set(terminal_id, ProcessState.CLOSE_FAILED)
-            else:
-                self.process_states.clear(terminal_id)
-            self._emit_terminals()
-            self._emit_live_streams()
-            if worker_still_running or terminal_still_running:
-                return fail(
-                    "Não foi possível confirmar o encerramento completo. "
-                    f"Worker: {worker_message}",
-                    {
-                        "mt5_stopped": stopped,
-                        "mt5_running": terminal_still_running,
-                        "worker_running": worker_still_running,
-                    },
-                )
-            return ok({"stopped": stopped}, "Leitura encerrada e comando para fechar o MT5 executado.")
-        except Exception as exc:
-            profile = self.terminal_registry.get(terminal_id)
-            if profile and self.terminal_manager.is_running(terminal_id, profile):
-                self.process_states.set(terminal_id, ProcessState.CLOSE_FAILED)
-            else:
-                self.process_states.clear(terminal_id)
-            self._emit_terminals()
-            logger.exception("Erro ao parar terminal")
-            return fail(str(exc))
+        profile = self.terminal_registry.get(terminal_id)
+        if not profile:
+            return fail("Terminal não encontrado.")
+        return self._start_lifecycle_operation(
+            "close_terminal",
+            [profile],
+            close_mt5=True,
+        )
 
     @Slot(str, str, result=str)
     def deleteTerminal(self, terminal_id: str, confirmation: str) -> str:
+        if self.lifecycle_busy:
+            return self._lifecycle_busy_response()
         profile = self.terminal_registry.get(terminal_id)
         if not profile:
             return fail("Terminal não encontrado.")
@@ -711,8 +1026,6 @@ class MarketHubBridge(QObject):
         staged_dir: Path | None = None
         try:
             self.worker_manager.clear_live_streams_for_terminal(terminal_id)
-            self.worker_manager.stop_worker(terminal_id)
-            self.terminal_manager.stop(terminal_id, profile=profile)
             original_dir, staged_dir = self.terminal_manager.stage_delete_instance(profile)
 
             if not self.terminal_registry.remove(terminal_id):
@@ -750,6 +1063,8 @@ class MarketHubBridge(QObject):
 
     @Slot(str, result=str)
     def recreateTerminalInstance(self, terminal_id: str) -> str:
+        if self.lifecycle_busy:
+            return self._lifecycle_busy_response()
         profile = self.terminal_registry.get(terminal_id)
         if not profile:
             return fail("Terminal não encontrado.")
@@ -779,6 +1094,8 @@ class MarketHubBridge(QObject):
 
     @Slot(str, result=str)
     def removeMissingTerminal(self, terminal_id: str) -> str:
+        if self.lifecycle_busy:
+            return self._lifecycle_busy_response()
         profile = self.terminal_registry.get(terminal_id)
         if not profile:
             return fail("Terminal não encontrado.")
@@ -801,6 +1118,8 @@ class MarketHubBridge(QObject):
 
     @Slot(str, result=str)
     def startWorker(self, terminal_id: str) -> str:
+        if self.lifecycle_busy:
+            return self._lifecycle_busy_response()
         try:
             profile = self.terminal_registry.get(terminal_id)
             if not profile:
@@ -844,18 +1163,14 @@ class MarketHubBridge(QObject):
 
     @Slot(str, result=str)
     def stopWorker(self, terminal_id: str) -> str:
-        try:
-            stopped, message = self.worker_manager.stop_worker(terminal_id)
-            self.process_states.complete_startup(terminal_id)
-            self._emit_terminals()
-            self._emit_live_streams()
-            state = self.worker_manager.state(terminal_id).to_dict()
-            if not stopped and self.worker_manager.is_running(terminal_id):
-                return fail(message, state)
-            return ok(state, message)
-        except Exception as exc:
-            logger.exception("Erro ao parar worker")
-            return fail(str(exc))
+        profile = self.terminal_registry.get(terminal_id)
+        if not profile:
+            return fail("Terminal não encontrado.")
+        return self._start_lifecycle_operation(
+            "stop_worker",
+            [profile],
+            close_mt5=False,
+        )
 
     def _parse_terminal_ids(self, terminal_ids_json: str) -> tuple[list[str], str | None]:
         try:
@@ -879,6 +1194,8 @@ class MarketHubBridge(QObject):
 
     @Slot(str, result=str)
     def startSelectedWorkers(self, terminal_ids_json: str) -> str:
+        if self.lifecycle_busy:
+            return self._lifecycle_busy_response()
         try:
             terminal_ids, error = self._parse_terminal_ids(terminal_ids_json)
             if error:
@@ -952,55 +1269,17 @@ class MarketHubBridge(QObject):
 
     @Slot(str, result=str)
     def closeSelectedTerminals(self, terminal_ids_json: str) -> str:
-        try:
-            terminal_ids, error = self._parse_terminal_ids(terminal_ids_json)
-            if error:
-                return fail(error)
-            profiles_by_id = {profile.id: profile for profile in self.terminal_registry.list()}
-            result: dict[str, str] = {}
-            failures = 0
-            for terminal_id in terminal_ids:
-                profile = profiles_by_id.get(terminal_id)
-                if not profile:
-                    result[terminal_id] = "Terminal não encontrado."
-                    failures += 1
-                    continue
-                self.process_states.set(terminal_id, ProcessState.CLOSING)
-                self.worker_manager.mark_stopping(terminal_id)
-                self._publish_terminal_transition()
-                self.worker_manager.clear_live_streams_for_terminal(terminal_id)
-                _, worker_message = self.worker_manager.stop_worker(terminal_id)
-                worker_still_running = self.worker_manager.is_running(terminal_id)
-                stopped = (
-                    False
-                    if worker_still_running
-                    else self.terminal_manager.stop(profile.id, profile=profile)
-                )
-                terminal_still_running = self.terminal_manager.is_running(profile.id, profile)
-                if worker_still_running or terminal_still_running:
-                    self.process_states.set(terminal_id, ProcessState.CLOSE_FAILED)
-                else:
-                    self.process_states.clear(terminal_id)
-                if worker_still_running or terminal_still_running:
-                    failures += 1
-                    result[terminal_id] = (
-                        f"MT5 {'ainda aberto' if terminal_still_running else 'fechado'}, "
-                        f"worker {'ainda vivo' if worker_still_running else 'encerrado'}: "
-                        f"{worker_message}"
-                    )
-                else:
-                    result[terminal_id] = "MT5 fechado." if stopped else "O MT5 já estava fechado."
-            self._emit_terminals()
-            self._emit_live_streams()
-            if failures:
-                return fail(
-                    f"Terminais processados com {failures} falha(s) de encerramento.",
-                    result,
-                )
-            return ok(result, "Terminais selecionados fechados.")
-        except Exception as exc:
-            logger.exception("Erro ao fechar terminais selecionados")
-            return fail(str(exc))
+        terminal_ids, error = self._parse_terminal_ids(terminal_ids_json)
+        if error:
+            return fail(error)
+        profiles_by_id = {profile.id: profile for profile in self.terminal_registry.list()}
+        if any(terminal_id not in profiles_by_id for terminal_id in terminal_ids):
+            return fail("Um ou mais terminais selecionados não existem mais.")
+        return self._start_lifecycle_operation(
+            "close_selected",
+            [profiles_by_id[terminal_id] for terminal_id in terminal_ids],
+            close_mt5=True,
+        )
 
     @Slot(result=str)
     def startAllWorkers(self) -> str:
@@ -1010,24 +1289,16 @@ class MarketHubBridge(QObject):
 
     @Slot(result=str)
     def stopAllWorkers(self) -> str:
-        try:
-            failures: dict[str, str] = {}
-            for terminal in self.terminal_registry.list():
-                _, message = self.worker_manager.stop_worker(terminal.id)
-                self.process_states.complete_startup(terminal.id)
-                if self.worker_manager.is_running(terminal.id):
-                    failures[terminal.id] = message
-            self._emit_terminals()
-            self._emit_live_streams()
-            if failures:
-                return fail(
-                    f"{len(failures)} worker(s) não confirmaram o encerramento.",
-                    failures,
-                )
-            return ok(message="Todas as leituras foram encerradas.")
-        except Exception as exc:
-            logger.exception("Erro ao parar todos os workers")
-            return fail(str(exc))
+        profiles = [
+            profile
+            for profile in self.terminal_registry.list()
+            if self.worker_manager.is_running(profile.id)
+        ]
+        return self._start_lifecycle_operation(
+            "stop_all_workers",
+            profiles,
+            close_mt5=False,
+        )
 
     @Slot(str, result=str)
     def testConnection(self, terminal_id: str) -> str:
@@ -1035,6 +1306,8 @@ class MarketHubBridge(QObject):
 
     @Slot(str, result=str)
     def reconnectWorker(self, terminal_id: str) -> str:
+        if self.lifecycle_busy:
+            return self._lifecycle_busy_response()
         try:
             sent, message = self.worker_manager.request_reconnect(terminal_id)
             return ok(message=message) if sent else fail(message)
@@ -1044,6 +1317,8 @@ class MarketHubBridge(QObject):
 
     @Slot(str, result=str)
     def refreshSnapshot(self, terminal_id: str) -> str:
+        if self.lifecycle_busy:
+            return self._lifecycle_busy_response()
         try:
             profile = self.terminal_registry.get(terminal_id)
             if not profile:
@@ -1062,6 +1337,8 @@ class MarketHubBridge(QObject):
 
     @Slot(str, str, str, result=str)
     def configureLiveStream(self, slot_id: str, terminal_id: str, symbol_id: str) -> str:
+        if self.lifecycle_busy:
+            return self._lifecycle_busy_response()
         try:
             profile = self.terminal_registry.get(terminal_id)
             if not profile:
@@ -1110,6 +1387,8 @@ class MarketHubBridge(QObject):
 
     @Slot(str, result=str)
     def clearLiveStream(self, slot_id: str) -> str:
+        if self.lifecycle_busy:
+            return self._lifecycle_busy_response()
         try:
             _, message = self.worker_manager.clear_live_stream(slot_id)
             self._emit_live_streams()
@@ -1120,6 +1399,8 @@ class MarketHubBridge(QObject):
 
     @Slot(result=str)
     def clearAllLiveStreams(self) -> str:
+        if self.lifecycle_busy:
+            return self._lifecycle_busy_response()
         try:
             self.worker_manager.clear_all_live_streams()
             self._emit_live_streams()
@@ -1144,7 +1425,8 @@ class MainWindow(QMainWindow):
         self.worker_manager = worker_manager
         self._shutdown_done = False
         self._close_requested = False
-        self.setWindowTitle("EP Market Hub — Kernel 0.4.10")
+        self._shutdown_started = False
+        self.setWindowTitle("EP Market Hub — Kernel 0.4.11")
         self.resize(1440, 860)
 
         self.web_view = QWebEngineView(self)
@@ -1166,6 +1448,7 @@ class MainWindow(QMainWindow):
         )
         self.channel.registerObject("marketHub", self.bridge)
         self.web_view.page().setWebChannel(self.channel)
+        self.bridge.lifecycleFinished.connect(self._on_lifecycle_finished)
 
         self.worker_poll_timer = QTimer(self)
         self.worker_poll_timer.setInterval(150)
@@ -1201,29 +1484,51 @@ class MainWindow(QMainWindow):
     def shutdown(self) -> None:
         if self._shutdown_done:
             return
-        self._shutdown_done = True
-        logger.info("Encerrando EP Market Hub, workers e MT5 controlados...")
-        self.worker_poll_timer.stop()
-        try:
-            self.bridge.publish_shutdown_transitions()
-        except Exception:
-            logger.exception("Falha ao publicar estados visuais de encerramento")
-        try:
-            self.worker_manager.clear_all_live_streams()
-        except Exception:
-            logger.exception("Falha ao limpar fluxos durante encerramento")
-        try:
-            self.worker_manager.stop_all()
-        except Exception:
-            logger.exception("Falha ao encerrar workers durante encerramento")
-        try:
-            stopped = self.terminal_manager.stop_all(self.terminal_registry.list())
-            logger.info("MT5 controlados encerrados: %s", stopped)
-        except Exception:
-            logger.exception("Falha ao encerrar MT5 controlados")
+        if not self._close_requested:
+            self._close_requested = True
+            self.worker_poll_timer.stop()
+        self._begin_application_shutdown()
 
-    def _complete_close_request(self) -> None:
-        self.shutdown()
+    def _begin_application_shutdown(self) -> None:
+        if self._shutdown_done or self._shutdown_started:
+            return
+        if self.bridge.lifecycle_busy:
+            return
+        logger.info("Encerrando EP Market Hub, workers e MT5 controlados...")
+        response = json.loads(self.bridge.shutdownApplication())
+        if not response.get("ok"):
+            logger.error("Falha explícita ao iniciar shutdown: %s", response.get("message"))
+            QTimer.singleShot(0, self._begin_application_shutdown)
+            return
+        operation_id = response.get("data", {}).get("operation_id")
+        if operation_id:
+            self._shutdown_started = True
+            return
+        self._shutdown_done = True
+        self.close()
+
+    @Slot(str)
+    def _on_lifecycle_finished(self, payload_json: str) -> None:
+        try:
+            payload = json.loads(payload_json)
+        except json.JSONDecodeError:
+            logger.exception("Resultado de encerramento inválido recebido pela janela")
+            return
+        if payload.get("kind") != "application_shutdown":
+            if self._close_requested:
+                QTimer.singleShot(0, self._begin_application_shutdown)
+            return
+
+        self._shutdown_started = False
+        self._shutdown_done = True
+        if payload.get("ok"):
+            logger.info("Shutdown concluído com confirmação dos workers e MT5.")
+        else:
+            logger.error(
+                "Shutdown produziu falha explícita: %s | %s",
+                payload.get("message"),
+                payload.get("data"),
+            )
         self.close()
 
     def closeEvent(self, event: QCloseEvent) -> None:
@@ -1236,7 +1541,8 @@ class MainWindow(QMainWindow):
         self._close_requested = True
         self.worker_poll_timer.stop()
         try:
-            self.bridge.publish_shutdown_transitions()
+            if not self.bridge.lifecycle_busy:
+                self.bridge.publish_shutdown_transitions()
             self.web_view.page().runJavaScript(
                 "showShutdownTransitions(); void document.body.offsetHeight;"
             )
@@ -1247,4 +1553,4 @@ class MainWindow(QMainWindow):
             )
         except Exception:
             logger.exception("Falha ao preparar feedback visual do encerramento")
-        QTimer.singleShot(150, self._complete_close_request)
+        QTimer.singleShot(150, self._begin_application_shutdown)

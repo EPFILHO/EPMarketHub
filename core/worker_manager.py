@@ -229,18 +229,26 @@ class MT5WorkerManager:
                 self.stop_worker(terminal_id)
             except Exception:
                 logger.exception("Falha inesperada ao encerrar worker %s", terminal_id)
+        self.finish_shutdown()
+
+    def finish_shutdown(self) -> bool:
+        """Sela o supervisor depois que todos os workers tiveram a morte confirmada."""
+
+        if self._shutdown:
+            return True
         if self.active_count():
             logger.error(
                 "O encerramento terminou com %s worker(s) ainda vivo(s).",
                 self.active_count(),
             )
-            return
+            return False
         self._shutdown = True
         try:
             self.event_queue.close()
             self.event_queue.join_thread()
         except Exception:
             logger.exception("Falha ao fechar a fila de eventos dos workers")
+        return True
 
     def active_count(self) -> int:
         return sum(1 for handle in self._handles.values() if handle.process.is_alive())
