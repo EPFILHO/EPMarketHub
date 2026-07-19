@@ -80,7 +80,7 @@
 8. Confirme que não existe opção na interface nem arquivo em `user_data` para o usuário alterar o limite simultâneo.
 9. Com uma leitura conectada, feche diretamente a janela daquele MT5 pelo **X**.
 10. Confirme a sequência coerente **MT5 aberto / Reconectando** enquanto o processo ainda é detectado, depois **Reabrindo MT5 / Reconectando** quando sua ausência for confirmada, sem voltar ao estado anterior durante a reabertura.
-11. Confirme que o kernel reabre a mesma instância uma única vez, minimizada, e que os badges voltam a **MT5 aberto / Conectado**.
+11. Confirme que o kernel reabre a mesma instância minimizada sem iniciar dois processos para o mesmo episódio; feche-a novamente pelo X e confirme uma nova reabertura automática.
 12. Selecione dois ou três MT5 abertos e clique em **Fechar selecionados**.
 13. Confirme que o texto do botão mostra o progresso e que cada card muda para **MT5 fechado / Desconectado** assim que seu próprio fechamento termina, sem esperar o último.
 
@@ -92,7 +92,7 @@ Use a instalação de teste sincronizada e mantenha o Gerenciador de Tarefas dis
 2. Feche um MT5 individualmente e confirme a pintura imediata **Fechando MT5 / desconectando**; tente navegar entre as abas enquanto o encerramento termina.
 3. Confirme que botões, seletores e formulários conflitantes ficam desabilitados somente no terminal em fechamento.
 4. Ainda durante esse fechamento, use **Abrir MT5** ou **Iniciar leitura** em outra conta/corretora e confirme que a ação começa normalmente, sem esperar o primeiro terminal.
-5. Com uma conta real conectada, desconecte temporariamente a internet; confirme **corretora desconectada** e aguarde mais de 15 segundos para verificar que o diagnóstico não vira **MT5 sem comunicação**. Religue a internet e confirme a recuperação.
+5. Com uma conta real conectada, desconecte temporariamente a internet; confirme **corretora desconectada** e aguarde mais de 15 segundos para verificar que o diagnóstico não vira **MT5 sem comunicação**. Religue a internet e confirme a recuperação sem reiniciar worker ou MT5.
 6. Com um MT5 aberto e sua leitura ativa, clique em **Parar leitura**; confirme **MT5 aberto / desconectado**, sem **Falha ao fechar MT5**.
 7. Selecione dois ou três MT5, clique em **Fechar selecionados** e confirme o progresso **Fechando 1/N**, **2/N** e assim por diante, com cada card concluído sem esperar o último.
 8. Reabra os MT5, clique repetidamente no X da aplicação e confirme que apenas um shutdown começa, a janela permanece visível e responsiva e só fecha depois do resultado final.
@@ -113,7 +113,7 @@ Use cadastros descartáveis e não armazene credenciais em arquivos ou capturas.
 5. Autentique deliberadamente outra conta e confirme **MT5 aberto / Conta divergente**; nenhum fluxo desse terminal deve ser considerado conectado.
 6. Restaure a conta correta e confirme recuperação automática para **Conectado**.
 7. Interrompa a conexão da corretora mantendo o processo aberto e confirme **MT5 aberto / Corretora desconectada**, sem confundir com falha IPC.
-8. Feche o MT5 pelo X e confirme **Reabrindo MT5 / Reconectando**, seguido da abertura minimizada.
+8. Feche o MT5 pelo X e confirme **Reabrindo MT5 / Reconectando**, sem **Processos duplicados**, seguido da abertura minimizada; repita o fechamento e confirme outra reabertura.
 9. Clique em **Fechar MT5** e confirme imediatamente **Fechando MT5 / Encerrando**, terminando em **MT5 fechado / Desconectado**.
 10. Confirme nos testes automatizados que um worker resistente mantém seu MT5 aberto, produz falha explícita e não dispara um ciclo de fechamento e reabertura.
 11. Deixe um worker de teste sem atividade além do limite interno e confirme **Worker sem resposta**; ao retomar um heartbeat válido, confirme a recuperação do estado.

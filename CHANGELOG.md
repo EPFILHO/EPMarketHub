@@ -140,6 +140,9 @@
 - Falha de um terminal não interrompe o estado final dos demais; falhas resistentes continuam explícitas e preservam o MT5 quando o worker permanece vivo.
 - Eventos de conclusão ou progresso com ID antigo são descartados e não restauram estados anteriores.
 - O watchdog preserva o diagnóstico explícito **corretora desconectada** em vez de substituí-lo pela orientação genérica **MT5 sem comunicação** durante uma indisponibilidade de rede/corretora.
+- A conexão IPC Python–MT5 permanece ativa quando somente a sessão da corretora está indisponível; esse estado não executa `mt5.shutdown()`, não incrementa tentativas IPC e se recupera automaticamente.
+- Ausência real de `terminal_info()` continua classificada como falha IPC e não pode produzir falso estado conectado.
+- Cada fechamento externo pelo X volta a reabrir o MT5 enquanto a leitura estiver ativa; heartbeats de reconexão não concluem prematuramente a reabertura nem expõem duplicidade transitória como erro confirmado.
 - **Parar leitura** mantém o processo como **MT5 aberto**; somente operações que realmente tentam fechar o terminal podem produzir **Falha ao fechar MT5**.
 - Protocolo worker/bridge v1, polling, temporizações, limites e aparência não relacionada ao encerramento permanecem inalterados.
 - Numeração e ícones planejados para a 0.4.12 não foram iniciados.

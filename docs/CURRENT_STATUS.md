@@ -13,7 +13,9 @@ A 0.4.11 preserva o kernel 0.4.10 validado e remove da thread gráfica as espera
 - O estado ocupado é isolado por terminal: fechar uma conta não desabilita botões nem interrompe o polling das outras contas/corretoras.
 - Falhas são isoladas por terminal e o shutdown global termina somente após confirmação ou falha explícita.
 - Tempos de espera, `terminate()`, `kill()`, protocolo v1, polling e limite simultâneo não mudaram.
-- Diagnósticos explícitos de corretora desconectada têm precedência sobre o fallback do watchdog, e parar somente a leitura não altera o estado do processo MT5.
+- A conexão IPC com o terminal e a sessão da corretora são tratadas separadamente: corretora desconectada mantém worker e IPC ativos, não escala para falha genérica e recupera automaticamente.
+- Cada fechamento externo do MT5, enquanto a leitura estiver ativa, solicita nova reabertura minimizada; atividade genérica de reconexão não encerra essa transição nem cria falso diagnóstico de processo duplicado.
+- Parar somente a leitura não altera o estado do processo MT5.
 
 ## Kernel preservado
 
