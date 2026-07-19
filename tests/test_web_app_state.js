@@ -170,6 +170,11 @@ assert.equal(context.workerLabel('broker_disconnected'), 'corretora desconectada
 assert.equal(context.workerLabel('worker_start_failed'), 'falha ao iniciar leitura');
 assert.equal(context.workerLabel('worker_crashed'), 'worker interrompido');
 assert.equal(context.workerLabel('stop_failed'), 'falha ao encerrar worker');
+assert.equal(context.lifecycleProcessState({ mt5_running: true }, false), 'open');
+assert.equal(context.lifecycleProcessState({ mt5_running: false }, false), 'closed');
+assert.equal(context.lifecycleProcessState({ mt5_running: true }, true), 'close_failed');
+assert.equal(context.lifecycleProcessState({ mt5_running: false }, true), 'closed');
+assert.match(context.receiveLifecycleProgress.toString(), /payload\?\.close_mt5/);
 assert.equal(
   context.terminalProcessLabel(
     { running: true, process_state: 'closing', instance_status: { state: 'ready' } },

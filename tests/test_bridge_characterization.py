@@ -806,6 +806,27 @@ def test_close_selected_emits_progress_for_each_terminal(tmp_path: Path) -> None
     assert response["ok"] is True
     assert [(item["index"], item["total"]) for item in progress] == [(1, 2), (2, 2)]
     assert [item["terminal"]["terminal_id"] for item in progress] == ["one", "two"]
+    assert all(item["close_mt5"] is True for item in progress)
+
+
+def test_stop_worker_progress_does_not_report_mt5_close(tmp_path: Path) -> None:
+    bridge, terminal_manager, worker_manager = build_bridge(tmp_path, ["one"])
+    terminal_manager.open_ids.add("one")
+    worker_manager.running_ids.add("one")
+
+    response = wait_for_lifecycle(bridge, bridge.stopWorker("one"))
+    progress = [
+        json.loads(value)
+        for value in bridge.lifecycleProgress.values
+        if json.loads(value).get("operation_id") == response["operation_id"]
+    ]
+    terminal = json.loads(bridge.getTerminals())["data"][0]
+
+    assert response["close_mt5"] is False
+    assert progress[0]["close_mt5"] is False
+    assert progress[0]["terminal"]["mt5_running"] is True
+    assert terminal["running"] is True
+    assert terminal["process_state"] == "open"
 
 
 def test_application_shutdown_returns_before_blocking_worker_and_keeps_cached_getters(

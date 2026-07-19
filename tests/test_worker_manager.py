@@ -462,6 +462,35 @@ def test_alive_worker_without_activity_becomes_unresponsive(
     assert manager.state("silent").connected is False
 
 
+def test_broker_disconnected_diagnosis_is_not_replaced_by_watchdog(
+    manager: MT5WorkerManager,
+) -> None:
+    manager.start_worker(profile("offline-broker"), [])
+    current_pid = manager.state("offline-broker").pid
+    status_event = {
+        "protocol_version": WORKER_PROTOCOL_VERSION,
+        "terminal_id": "offline-broker",
+        "event": "status",
+        "data": {
+            "pid": current_pid,
+            "state": "broker_disconnected",
+            "alive": True,
+            "connected": False,
+            "message": "Terminal encontrado, mas sem conexão com a corretora.",
+        },
+    }
+    manager.event_queue.items.append(status_event)
+    assert manager.poll_events() == [status_event]
+    manager._last_activity["offline-broker"] -= manager.unresponsive_seconds + 1
+
+    events = manager.poll_events()
+
+    state = manager.state("offline-broker")
+    assert events == []
+    assert state.state == "broker_disconnected"
+    assert state.message == "Terminal encontrado, mas sem conexão com a corretora."
+
+
 def test_new_worker_event_recovers_unresponsive_state(manager: MT5WorkerManager) -> None:
     manager.start_worker(profile("silent"), [])
     current_pid = manager.state("silent").pid

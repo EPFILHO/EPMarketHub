@@ -105,8 +105,10 @@ O fechamento do kernel cobre e testa:
 - conta autenticada diferente da identidade cadastrada;
 - biblioteca ligada a outro diretório de terminal;
 - worker vivo sem atividade observável pelo supervisor;
+- silêncio do worker depois de um diagnóstico explícito de corretora desconectada, sem perder a causa já confirmada;
 - mais de um processo para o mesmo executável;
 - tentativa de fechamento que deixa o processo vivo.
+- parada apenas da leitura sem atribuir falha de fechamento ao processo MT5.
 - evento tardio que tenta apagar uma falha de processo já confirmada.
 
 "Falha segura" significa preservar o último dado válido, não misturar sessões,

@@ -457,6 +457,7 @@ class MarketHubBridge(QObject):
                 report_progress(
                     {
                         "kind": kind,
+                        "close_mt5": close_mt5,
                         "index": index,
                         "total": total,
                         "terminal": result,
@@ -490,6 +491,7 @@ class MarketHubBridge(QObject):
 
             return {
                 "kind": kind,
+                "close_mt5": close_mt5,
                 "ok": operation_ok,
                 "message": message,
                 "data": {
@@ -536,6 +538,7 @@ class MarketHubBridge(QObject):
         operation_id = uuid4().hex
         self._lifecycle_operations[operation_id] = {
             "kind": kind,
+            "close_mt5": close_mt5,
             "terminal_ids": terminal_ids,
             "application_shutdown": application_shutdown,
         }
@@ -605,7 +608,7 @@ class MarketHubBridge(QObject):
 
         kind = str(payload.get("kind") or operation.get("kind") or "")
         results = payload.get("data", {}).get("results", {})
-        close_mt5 = kind in {"close_terminal", "close_selected", "application_shutdown"}
+        close_mt5 = bool(operation.get("close_mt5"))
         for terminal_id, result in results.items():
             if close_mt5:
                 if result.get("worker_running") or result.get("mt5_running"):

@@ -92,13 +92,15 @@ Use a instalação de teste sincronizada e mantenha o Gerenciador de Tarefas dis
 2. Feche um MT5 individualmente e confirme a pintura imediata **Fechando MT5 / desconectando**; tente navegar entre as abas enquanto o encerramento termina.
 3. Confirme que botões, seletores e formulários conflitantes ficam desabilitados somente no terminal em fechamento.
 4. Ainda durante esse fechamento, use **Abrir MT5** ou **Iniciar leitura** em outra conta/corretora e confirme que a ação começa normalmente, sem esperar o primeiro terminal.
-5. Selecione dois ou três MT5, clique em **Fechar selecionados** e confirme o progresso **Fechando 1/N**, **2/N** e assim por diante, com cada card concluído sem esperar o último.
-6. Reabra os MT5, clique repetidamente no X da aplicação e confirme que apenas um shutdown começa, a janela permanece visível e responsiva e só fecha depois do resultado final.
-7. Confirme no Gerenciador de Tarefas que os workers Python e cada `terminal64.exe` controlado terminaram realmente.
-8. Inicie o aplicativo sem abrir MT5, feche pelo X e confirme encerramento imediato, sem erro e sem segundo efeito ao clicar novamente.
-9. Após reabrir o aplicativo, confirme que cadastros, seleção, aliases e fluxos preservados continuam coerentes; nenhum sinal atrasado deve restaurar **Conectado** ou **MT5 aberto** para um processo já encerrado.
-10. Repita fechamento individual e em lote com os outros MT5 ativos e confirme isolamento: fechar um terminal não interrompe leitura nem processo dos demais antes de eles próprios entrarem no lote.
-11. Não provoque `terminate()`/`kill()` em conta real. A escalada resistente continua validada somente pelos fakes automatizados.
+5. Com uma conta real conectada, desconecte temporariamente a internet; confirme **corretora desconectada** e aguarde mais de 15 segundos para verificar que o diagnóstico não vira **MT5 sem comunicação**. Religue a internet e confirme a recuperação.
+6. Com um MT5 aberto e sua leitura ativa, clique em **Parar leitura**; confirme **MT5 aberto / desconectado**, sem **Falha ao fechar MT5**.
+7. Selecione dois ou três MT5, clique em **Fechar selecionados** e confirme o progresso **Fechando 1/N**, **2/N** e assim por diante, com cada card concluído sem esperar o último.
+8. Reabra os MT5, clique repetidamente no X da aplicação e confirme que apenas um shutdown começa, a janela permanece visível e responsiva e só fecha depois do resultado final.
+9. Confirme no Gerenciador de Tarefas que os workers Python e cada `terminal64.exe` controlado terminaram realmente.
+10. Inicie o aplicativo sem abrir MT5, feche pelo X e confirme encerramento imediato, sem erro e sem segundo efeito ao clicar novamente.
+11. Após reabrir o aplicativo, confirme que cadastros, seleção, aliases e fluxos preservados continuam coerentes; nenhum sinal atrasado deve restaurar **Conectado** ou **MT5 aberto** para um processo já encerrado.
+12. Repita fechamento individual e em lote com os outros MT5 ativos e confirme isolamento: fechar um terminal não interrompe leitura nem processo dos demais antes de eles próprios entrarem no lote.
+13. Não provoque `terminate()`/`kill()` em conta real. A escalada resistente continua validada somente pelos fakes automatizados.
 
 ## Máquina de estados do kernel
 

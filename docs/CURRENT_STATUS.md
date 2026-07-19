@@ -6,13 +6,14 @@ A 0.4.11 preserva o kernel 0.4.10 validado e remove da thread gráfica as espera
 
 - Uma única thread Python dedicada executa o trabalho bloqueante por vez; solicitações de terminais distintos podem ficar enfileiradas sem bloquear globalmente a GUI.
 - A bridge e os objetos Qt permanecem na thread principal; progresso e conclusão retornam por sinais enfileirados.
-- Polling é suspenso logicamente durante a operação e getters usam snapshots cacheados, sem leitura concorrente dos managers.
+- No fechamento individual, o polling continua para os demais terminais e o alvo usa seu snapshot; somente o shutdown global suspende polling e serve snapshots integrais.
 - Fechamentos individual, em lote, de leituras e pelo X mantêm a janela pintando e respondendo.
 - Ações conflitantes são recusadas no backend e desabilitadas no frontend até a conclusão.
 - IDs de operação impedem encerramento duplo e descartam sinais tardios.
 - O estado ocupado é isolado por terminal: fechar uma conta não desabilita botões nem interrompe o polling das outras contas/corretoras.
 - Falhas são isoladas por terminal e o shutdown global termina somente após confirmação ou falha explícita.
 - Tempos de espera, `terminate()`, `kill()`, protocolo v1, polling e limite simultâneo não mudaram.
+- Diagnósticos explícitos de corretora desconectada têm precedência sobre o fallback do watchdog, e parar somente a leitura não altera o estado do processo MT5.
 
 ## Kernel preservado
 

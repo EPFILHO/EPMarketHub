@@ -170,13 +170,19 @@ function setLifecycleBusy(busy, scope = {}) {
   applyLifecycleBusyState();
 }
 
-function applyLifecycleTerminalResult(result) {
+function lifecycleProcessState(result, closeMt5) {
+  const running = Boolean(result?.mt5_running);
+  if (closeMt5) return running ? 'close_failed' : 'closed';
+  return running ? 'open' : 'closed';
+}
+
+function applyLifecycleTerminalResult(result, closeMt5 = false) {
   const terminalId = String(result?.terminal_id || '');
   if (!terminalId) return;
   const terminal = terminals.find(row => row.id === terminalId);
   if (terminal) {
     terminal.running = Boolean(result.mt5_running);
-    terminal.process_state = result.mt5_running ? 'close_failed' : 'closed';
+    terminal.process_state = lifecycleProcessState(result, closeMt5);
   }
   workerStates[terminalId] = {
     ...(workerStates[terminalId] || terminal?.worker || {}),
@@ -192,7 +198,7 @@ function applyLifecycleTerminalResult(result) {
 
 function receiveLifecycleProgress(text) {
   const payload = typeof text === 'string' ? JSON.parse(text) : text;
-  applyLifecycleTerminalResult(payload?.terminal);
+  applyLifecycleTerminalResult(payload?.terminal, Boolean(payload?.close_mt5));
   pendingLifecycleOperations.get(payload?.operation_id)?.onProgress?.(payload);
 }
 

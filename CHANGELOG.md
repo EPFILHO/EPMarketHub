@@ -139,5 +139,7 @@
 - Clique repetido no X e solicitações concorrentes não iniciam shutdown duplicado.
 - Falha de um terminal não interrompe o estado final dos demais; falhas resistentes continuam explícitas e preservam o MT5 quando o worker permanece vivo.
 - Eventos de conclusão ou progresso com ID antigo são descartados e não restauram estados anteriores.
+- O watchdog preserva o diagnóstico explícito **corretora desconectada** em vez de substituí-lo pela orientação genérica **MT5 sem comunicação** durante uma indisponibilidade de rede/corretora.
+- **Parar leitura** mantém o processo como **MT5 aberto**; somente operações que realmente tentam fechar o terminal podem produzir **Falha ao fechar MT5**.
 - Protocolo worker/bridge v1, polling, temporizações, limites e aparência não relacionada ao encerramento permanecem inalterados.
 - Numeração e ícones planejados para a 0.4.12 não foram iniciados.

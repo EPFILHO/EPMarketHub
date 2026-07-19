@@ -591,6 +591,7 @@ class MT5WorkerManager:
                 if state.state in {
                     WorkerConnectionState.STOPPED.value,
                     WorkerConnectionState.STOPPING.value,
+                    WorkerConnectionState.BROKER_DISCONNECTED.value,
                     WorkerConnectionState.UNRESPONSIVE.value,
                     WorkerConnectionState.ERROR.value,
                     WorkerConnectionState.WORKER_CRASHED.value,
