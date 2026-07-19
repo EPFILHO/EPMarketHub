@@ -196,7 +196,11 @@ assert.equal(
 const progressiveCloseSource = context.closeSelectedTerminals.toString();
 assert.match(progressiveCloseSource, /bridge\.stopTerminal\(terminalId\)/);
 assert.match(progressiveCloseSource, /setLocalProcessTransition\(terminalId, 'closing'\)/);
+assert.match(progressiveCloseSource, /setLocalProcessTransition\(terminalId, 'closing'\);\s*await waitForUiPaint\(\)/);
 assert.doesNotMatch(progressiveCloseSource, /bridge\.closeSelectedTerminals/);
+
+const individualCloseSource = context.stopTerminal.toString();
+assert.match(individualCloseSource, /setLocalProcessTransition\(id, 'closing'\);\s*await waitForUiPaint\(\)/);
 
 const closedBeyondCapacity = context.terminalBulkActionState(
   terminalRows,

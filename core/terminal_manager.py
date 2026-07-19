@@ -411,12 +411,12 @@ class TerminalManager:
     def process_count(self, profile: TerminalProfile) -> int:
         processes = self._find_processes(profile)
         tracked = self._processes.get(profile.id)
-        if tracked and tracked.poll() is None:
-            tracked_pid = getattr(tracked, "pid", None)
-            found_pids = {getattr(process, "pid", None) for process in processes}
-            if tracked_pid not in found_pids:
-                return len(processes) + 1
-        return len(processes)
+        tracked_count = int(bool(tracked and tracked.poll() is None))
+        # O terminal pode substituir o PID usado no lançamento durante seu bootstrap.
+        # Nesse intervalo, o Popen e a varredura do Windows representam a mesma
+        # instância lógica e não devem ser somados. Duplicidade real continua sendo
+        # detectada quando a própria tabela de processos contém mais de uma entrada.
+        return max(len(processes), tracked_count)
 
     def _is_inside_instances(self, path: Path) -> bool:
         try:

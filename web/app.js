@@ -1348,8 +1348,18 @@ function setLocalProcessTransition(terminalId, processState) {
   updateTerminalWorkerRows();
 }
 
+function waitForUiPaint() {
+  return new Promise(resolve => {
+    const scheduleFrame = typeof requestAnimationFrame === 'function'
+      ? requestAnimationFrame
+      : callback => setTimeout(callback, 0);
+    scheduleFrame(() => setTimeout(resolve, 0));
+  });
+}
+
 async function launchTerminal(id) {
   setLocalProcessTransition(id, 'opening');
+  await waitForUiPaint();
   try {
     const res = parseResponse(await bridge.launchTerminal(id));
     toast(res.message, !res.ok);
@@ -1361,6 +1371,7 @@ async function launchTerminal(id) {
 
 async function stopTerminal(id) {
   setLocalProcessTransition(id, 'closing');
+  await waitForUiPaint();
   try {
     const res = parseResponse(await bridge.stopTerminal(id));
     toast(res.message, !res.ok);
@@ -1394,6 +1405,7 @@ async function openSelectedTerminals() {
     const terminal = terminals.find(row => row.id === id);
     if (terminal && !terminal.running) setLocalProcessTransition(id, 'opening');
   });
+  await waitForUiPaint();
   try {
     const res = parseResponse(await bridge.startSelectedWorkers(JSON.stringify(ids)));
     toast(res.message, !res.ok);
@@ -1427,6 +1439,7 @@ async function closeSelectedTerminals() {
       const terminalId = ids[index];
       if (button) button.textContent = `Fechando ${index + 1}/${ids.length}...`;
       setLocalProcessTransition(terminalId, 'closing');
+      await waitForUiPaint();
       const res = parseResponse(await bridge.stopTerminal(terminalId));
       if (res.ok) {
         Object.keys(liveTicks).forEach(slotId => {

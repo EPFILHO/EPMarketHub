@@ -255,3 +255,26 @@ def test_process_count_includes_just_launched_tracked_process(tmp_path: Path, mo
     monkeypatch.setattr(manager, "_find_processes", lambda _profile: [])
 
     assert manager.process_count(profile) == 1
+
+
+def test_process_count_does_not_add_bootstrap_pid_to_discovered_terminal(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    manager = build_manager(tmp_path)
+    profile = TerminalProfile(id="opening", label="Opening")
+
+    class TrackedProcess:
+        pid = 777
+
+        @staticmethod
+        def poll():
+            return None
+
+    class DiscoveredProcess:
+        pid = 888
+
+    manager._processes[profile.id] = TrackedProcess()
+    monkeypatch.setattr(manager, "_find_processes", lambda _profile: [DiscoveredProcess()])
+
+    assert manager.process_count(profile) == 1
