@@ -48,9 +48,11 @@ class FakeQMainWindow(FakeQObject):
 
 
 class FakeQTimer:
+    single_shots = []
+
     @staticmethod
     def singleShot(interval, callback) -> None:
-        pass
+        FakeQTimer.single_shots.append((interval, callback))
 
 
 class FakeQCoreApplication:
@@ -1025,6 +1027,71 @@ class FailingShutdownWorkerManager:
     def stop_all(self) -> None:
         self.stop_calls += 1
         raise RuntimeError("falha simulada ao parar workers")
+
+
+class CloseRequestEvent:
+    def __init__(self) -> None:
+        self.accepted = False
+        self.ignored = False
+
+    def accept(self) -> None:
+        self.accepted = True
+
+    def ignore(self) -> None:
+        self.ignored = True
+
+
+class CloseTransitionBridge:
+    def __init__(self) -> None:
+        self.publish_calls = 0
+
+    def publish_shutdown_transitions(self) -> None:
+        self.publish_calls += 1
+
+
+class CloseTransitionPage:
+    def __init__(self) -> None:
+        self.scripts = []
+
+    def runJavaScript(self, script: str) -> None:
+        self.scripts.append(script)
+
+
+class CloseTransitionWebView:
+    def __init__(self) -> None:
+        self._page = CloseTransitionPage()
+        self.update_calls = 0
+        self.repaint_calls = 0
+
+    def page(self) -> CloseTransitionPage:
+        return self._page
+
+    def update(self) -> None:
+        self.update_calls += 1
+
+    def repaint(self) -> None:
+        self.repaint_calls += 1
+
+
+def test_close_event_keeps_window_visible_until_badges_are_painted() -> None:
+    window = MainWindow.__new__(MainWindow)
+    window._shutdown_done = False
+    window._close_requested = False
+    window.worker_poll_timer = CountingTimer()
+    window.bridge = CloseTransitionBridge()
+    window.web_view = CloseTransitionWebView()
+    event = CloseRequestEvent()
+    FakeQTimer.single_shots.clear()
+
+    window.closeEvent(event)
+
+    assert event.ignored is True
+    assert event.accepted is False
+    assert window.bridge.publish_calls == 1
+    assert "showShutdownTransitions()" in window.web_view.page().scripts[-1]
+    assert window.web_view.update_calls == 1
+    assert window.web_view.repaint_calls == 1
+    assert FakeQTimer.single_shots[-1][0] == 150
 
 
 def test_main_window_shutdown_is_idempotent() -> None:

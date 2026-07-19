@@ -1354,6 +1354,25 @@ function setLocalProcessTransition(terminalId, processState) {
   }
 }
 
+function setLocalTerminalShutdownTransition(terminalId) {
+  setLocalProcessTransition(terminalId, 'closing');
+  const item = document.getElementById(`terminalItem-${terminalId}`);
+  const workerBadge = item?.querySelector('.worker-badge');
+  if (workerBadge) {
+    workerBadge.className = 'badge worker-badge warn';
+    workerBadge.textContent = 'desconectando';
+  }
+}
+
+function showShutdownTransitions() {
+  terminals.forEach(terminal => {
+    const worker = workerStates[terminal.id] || terminal.worker || {};
+    if (terminal.running || worker.alive) {
+      setLocalTerminalShutdownTransition(terminal.id);
+    }
+  });
+}
+
 function waitForUiPaint() {
   return new Promise(resolve => setTimeout(resolve, 50));
 }
@@ -1371,7 +1390,7 @@ async function launchTerminal(id) {
 }
 
 async function stopTerminal(id) {
-  setLocalProcessTransition(id, 'closing');
+  setLocalTerminalShutdownTransition(id);
   await waitForUiPaint();
   try {
     const res = parseResponse(await bridge.stopTerminal(id));
@@ -1439,7 +1458,7 @@ async function closeSelectedTerminals() {
     for (let index = 0; index < ids.length; index++) {
       const terminalId = ids[index];
       if (button) button.textContent = `Fechando ${index + 1}/${ids.length}...`;
-      setLocalProcessTransition(terminalId, 'closing');
+      setLocalTerminalShutdownTransition(terminalId);
       await waitForUiPaint();
       const res = parseResponse(await bridge.stopTerminal(terminalId));
       if (res.ok) {

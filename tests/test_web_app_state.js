@@ -21,8 +21,9 @@ function plain(value) {
 }
 
 const immediateBadge = { className: '', textContent: 'MT5 aberto' };
+const immediateWorkerBadge = { className: '', textContent: 'conectado' };
 context.document.getElementById = id => id === 'terminalItem-local-transition'
-  ? { querySelector: selector => selector === '.mt5-badge' ? immediateBadge : null }
+  ? { querySelector: selector => selector === '.mt5-badge' ? immediateBadge : (selector === '.worker-badge' ? immediateWorkerBadge : null) }
   : null;
 vm.runInContext("terminals = [{ id: 'local-transition', running: true, instance_status: { state: 'ready' } }]", context);
 context.setLocalProcessTransition('local-transition', 'opening');
@@ -30,9 +31,11 @@ assert.equal(
   vm.runInContext("terminals.find(row => row.id === 'local-transition').process_state", context),
   'opening',
 );
-context.setLocalProcessTransition('local-transition', 'closing');
+context.setLocalTerminalShutdownTransition('local-transition');
 assert.equal(immediateBadge.textContent, 'Fechando MT5');
 assert.match(immediateBadge.className, /warn/);
+assert.equal(immediateWorkerBadge.textContent, 'desconectando');
+assert.match(immediateWorkerBadge.className, /warn/);
 context.document.getElementById = () => null;
 
 const terminalRows = [
@@ -204,12 +207,12 @@ assert.equal(
 );
 const progressiveCloseSource = context.closeSelectedTerminals.toString();
 assert.match(progressiveCloseSource, /bridge\.stopTerminal\(terminalId\)/);
-assert.match(progressiveCloseSource, /setLocalProcessTransition\(terminalId, 'closing'\)/);
-assert.match(progressiveCloseSource, /setLocalProcessTransition\(terminalId, 'closing'\);\s*await waitForUiPaint\(\)/);
+assert.match(progressiveCloseSource, /setLocalTerminalShutdownTransition\(terminalId\)/);
+assert.match(progressiveCloseSource, /setLocalTerminalShutdownTransition\(terminalId\);\s*await waitForUiPaint\(\)/);
 assert.doesNotMatch(progressiveCloseSource, /bridge\.closeSelectedTerminals/);
 
 const individualCloseSource = context.stopTerminal.toString();
-assert.match(individualCloseSource, /setLocalProcessTransition\(id, 'closing'\);\s*await waitForUiPaint\(\)/);
+assert.match(individualCloseSource, /setLocalTerminalShutdownTransition\(id\);\s*await waitForUiPaint\(\)/);
 
 const closedBeyondCapacity = context.terminalBulkActionState(
   terminalRows,

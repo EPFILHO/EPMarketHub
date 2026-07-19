@@ -1143,6 +1143,7 @@ class MainWindow(QMainWindow):
         self.terminal_manager = terminal_manager
         self.worker_manager = worker_manager
         self._shutdown_done = False
+        self._close_requested = False
         self.setWindowTitle("EP Market Hub — Kernel 0.4.10")
         self.resize(1440, 860)
 
@@ -1221,6 +1222,29 @@ class MainWindow(QMainWindow):
         except Exception:
             logger.exception("Falha ao encerrar MT5 controlados")
 
-    def closeEvent(self, event: QCloseEvent) -> None:
+    def _complete_close_request(self) -> None:
         self.shutdown()
-        event.accept()
+        self.close()
+
+    def closeEvent(self, event: QCloseEvent) -> None:
+        if self._shutdown_done:
+            event.accept()
+            return
+        event.ignore()
+        if self._close_requested:
+            return
+        self._close_requested = True
+        self.worker_poll_timer.stop()
+        try:
+            self.bridge.publish_shutdown_transitions()
+            self.web_view.page().runJavaScript(
+                "showShutdownTransitions(); void document.body.offsetHeight;"
+            )
+            self.web_view.update()
+            self.web_view.repaint()
+            QCoreApplication.processEvents(
+                QEventLoop.ProcessEventsFlag.ExcludeUserInputEvents
+            )
+        except Exception:
+            logger.exception("Falha ao preparar feedback visual do encerramento")
+        QTimer.singleShot(150, self._complete_close_request)
