@@ -100,8 +100,39 @@ class MT5Connector:
                 terminal_path=self.profile.terminal_exe,
             )
 
-        account = mt5.account_info()
         terminal = mt5.terminal_info()
+        if terminal is None:
+            code, msg = mt5.last_error()
+            suffix = f" ({code} - {msg})" if code or msg else ""
+            classified_state = classify_initialize_failure(code, msg) if code or msg else ""
+            if classified_state == WorkerConnectionState.AUTHENTICATION_FAILED.value:
+                return TerminalConnectionStatus(
+                    terminal_id=self.profile.id,
+                    ok=False,
+                    message=(
+                        "Falha de autenticação no MT5. Faça login manualmente e verifique "
+                        f"conta, senha e servidor.{suffix}"
+                    ),
+                    state=classified_state,
+                    terminal_path=self.profile.terminal_exe,
+                )
+            if classified_state == WorkerConnectionState.CONFIGURATION_ERROR.value:
+                return TerminalConnectionStatus(
+                    terminal_id=self.profile.id,
+                    ok=False,
+                    message=f"Configuração do conector MT5 indisponível.{suffix}",
+                    state=classified_state,
+                    terminal_path=self.profile.terminal_exe,
+                )
+            return TerminalConnectionStatus(
+                terminal_id=self.profile.id,
+                ok=False,
+                message=MT5_COMMUNICATION_GUIDANCE,
+                state=WorkerConnectionState.RECONNECTING.value,
+                terminal_path=self.profile.terminal_exe,
+            )
+
+        account = mt5.account_info()
         if account is None:
             code, msg = mt5.last_error()
             suffix = f" ({code} - {msg})" if code or msg else ""
@@ -143,8 +174,8 @@ class MT5Connector:
                 terminal_path=self.profile.terminal_exe,
             )
 
-        connected = bool(getattr(terminal, "connected", True)) if terminal else True
-        connected_path = getattr(terminal, "path", None) if terminal else None
+        connected = bool(getattr(terminal, "connected", True))
+        connected_path = getattr(terminal, "path", None)
         account_login = getattr(account, "login", None)
         account_server = getattr(account, "server", None)
         if not terminal_path_matches(self.profile.terminal_exe, connected_path):

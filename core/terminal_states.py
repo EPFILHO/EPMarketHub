@@ -55,6 +55,16 @@ MT5_COMMUNICATION_GUIDANCE = (
     "Sem comunicação com o MT5. Abra o terminal e verifique login, servidor ou janelas pendentes."
 )
 
+IPC_ATTACHED_STATES = frozenset(
+    {
+        WorkerConnectionState.CONNECTED.value,
+        WorkerConnectionState.WAITING_LOGIN.value,
+        WorkerConnectionState.AUTHENTICATION_FAILED.value,
+        WorkerConnectionState.ACCOUNT_MISMATCH.value,
+        WorkerConnectionState.BROKER_DISCONNECTED.value,
+    }
+)
+
 _AUTHENTICATION_MARKERS = (
     "auth failed",
     "authentication failed",
@@ -160,6 +170,12 @@ class TerminalProcessStateMachine:
             ProcessState.OPENING.value,
             ProcessState.REOPENING.value,
         }:
+            self.clear(terminal_id)
+
+    def complete_opening(self, terminal_id: str) -> None:
+        """Conclui abertura inicial sem aceitar uma reabertura ainda não confirmada."""
+
+        if self._transitions.get(terminal_id) == ProcessState.OPENING.value:
             self.clear(terminal_id)
 
     def forget(self, terminal_id: str) -> None:
