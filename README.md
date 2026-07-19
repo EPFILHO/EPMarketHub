@@ -2,7 +2,7 @@
 
 Aplicativo desktop local para organizar instâncias controladas do MetaTrader 5 e ler dados de mercado por meio da biblioteca Python `MetaTrader5`.
 
-Esta versão mantém o kernel endurecido da 0.4.10 e torna a interface responsiva durante o encerramento de workers e MT5. As esperas, `terminate()` e `kill()` continuam confirmando o estado real dos processos, mas são executadas fora da thread gráfica por uma operação serializada; QWebEngine, QWebChannel e toda atualização visual permanecem na thread principal do Qt.
+Esta versão mantém o kernel endurecido da 0.4.10 e torna a interface responsiva durante o encerramento de workers e MT5. As esperas, `terminate()` e `kill()` continuam confirmando o estado real dos processos, mas são executadas fora da thread gráfica por uma operação serializada; QWebEngine, QWebChannel e toda atualização visual permanecem na thread principal do Qt. No fechamento individual, somente o terminal envolvido fica indisponível: as demais contas/corretoras continuam recebendo atualizações e aceitando ações.
 
 A baseline 0.4.9 e o kernel 0.4.10 foram validados manualmente no Windows com instâncias MT5 reais e conexões simultâneas. A rodada manual final da GUI responsiva 0.4.11 está descrita em `docs/MANUAL_TESTS.md`.
 

@@ -21,7 +21,7 @@ Worker MT5 #3 → terminal64.exe da instância C
 
 O processo principal cuida da interface, registros, abertura/fechamento dos terminais e supervisão dos workers. Ele não deve manter múltiplas conexões diretas com MT5.
 
-`QWebEngineView`, `QWebChannel`, `MainWindow`, a bridge e todas as emissões que alteram a tela permanecem na thread principal do Qt. Somente o trabalho bloqueante de encerramento usa uma thread Python dedicada. Enquanto essa operação possui os managers, o polling fica suspenso e os getters retornam snapshots preparados antes da partida; progresso e conclusão voltam à thread Qt por sinais enfileirados e identificados por operação.
+`QWebEngineView`, `QWebChannel`, `MainWindow`, a bridge e todas as emissões que alteram a tela permanecem na thread principal do Qt. Somente o trabalho bloqueante de encerramento usa uma thread Python dedicada. Os managers protegem suas estruturas compartilhadas com locks curtos, nunca mantidos durante `join()`, `terminate()` ou `kill()`. No fechamento individual, o polling continua para os demais terminais e o alvo usa seu snapshot de transição até a conclusão. Somente o shutdown global suspende polling e serve snapshots integrais. Progresso e conclusão voltam à thread Qt por sinais enfileirados e identificados por operação.
 
 Cada worker é um processo separado, inicializa a biblioteca `MetaTrader5` apontando para uma instância específica e mantém aquela conexão viva enquanto a leitura estiver ativa.
 
@@ -61,7 +61,7 @@ Tipos importantes de mensagens:
 - erro;
 - heartbeat.
 
-Eventos carregam a identidade do processo. O supervisor descarta mensagens residuais de um PID anterior, usa entrega não bloqueante para eventos volumosos e uma espera curta e limitada para eventos críticos. A parada começa graciosa e escala para `terminate()` e `kill()` quando necessário; um processo resistente permanece visível como erro. Na 0.4.11 essas mesmas esperas são executadas pelo executor serial de ciclo de vida, sem alterar protocolo ou temporizações.
+Eventos carregam a identidade do processo. O supervisor descarta mensagens residuais de um PID anterior e eventos tardios de um terminal já marcado para parada, usa entrega não bloqueante para eventos volumosos e uma espera curta e limitada para eventos críticos. A parada começa graciosa e escala para `terminate()` e `kill()` quando necessário; um processo resistente permanece visível como erro. Na 0.4.11 essas mesmas esperas são executadas pelo executor serial de ciclo de vida, sem alterar protocolo ou temporizações.
 
 O frontend recebe o estado por métodos expostos no QWebChannel e renderiza apenas terminais conectados no Dashboard.
 

@@ -43,7 +43,7 @@ Não pertencem ao kernel:
 10. O shutdown pode ser chamado mais de uma vez sem repetir efeitos destrutivos.
 11. Um worker ainda vivo impede o fechamento do MT5 que ele supervisiona, evitando reabertura automática após uma parada incompleta.
 12. Eventos tardios do worker não apagam falhas confirmadas de abertura ou fechamento do processo MT5.
-13. Durante uma operação de encerramento assíncrona, somente o executor serial acessa os managers mutáveis; consumidores da GUI usam snapshots até a conclusão enfileirada na thread Qt.
+13. Durante encerramento assíncrono, os managers compartilham somente seções curtas protegidas por lock; nenhuma espera de processo mantém esses locks. A GUI usa snapshot para o terminal em parada, mas continua consultando e operando terminais não envolvidos.
 
 ## Política do limite simultâneo
 

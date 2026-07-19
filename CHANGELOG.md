@@ -134,7 +134,8 @@
 - Executor Python dedicado e estritamente serial para esperas, `terminate()` e `kill()`, sem alterar seus tempos, escalonamento ou confirmação real de processos.
 - Polling e getters usam snapshots cacheados durante a operação, evitando acesso concorrente aos managers mutáveis.
 - Fechamento individual, em lote, parada de leituras e encerramento pelo X passam a retornar imediatamente e concluir por sinais enfileirados de progresso e resultado.
-- Ações conflitantes ficam desabilitadas enquanto o encerramento está ativo; os badges mostram imediatamente **Fechando MT5 / desconectando**.
+- Somente as ações dos terminais envolvidos ficam desabilitadas; outras contas/corretoras continuam operáveis como no fluxo **Abrir MT5**, e os badges afetados mostram imediatamente **Fechando MT5 / desconectando**.
+- Operações de terminais distintos podem ser solicitadas sem bloqueio global e são executadas de forma serial pelo mesmo executor; polling e atualizações dos terminais não envolvidos continuam ativos.
 - Clique repetido no X e solicitações concorrentes não iniciam shutdown duplicado.
 - Falha de um terminal não interrompe o estado final dos demais; falhas resistentes continuam explícitas e preservam o MT5 quando o worker permanece vivo.
 - Eventos de conclusão ou progresso com ID antigo são descartados e não restauram estados anteriores.
