@@ -68,6 +68,7 @@ def test_process_state_machine_keeps_transitions_and_detects_duplicates() -> Non
     states.set("one", ProcessState.OPENING)
 
     assert states.resolve("one", running=True, process_count=1) == ProcessState.OPENING.value
+    assert states.resolve("one", running=True, process_count=2) == ProcessState.OPENING.value
 
     states.clear("one")
     assert states.resolve("one", running=True, process_count=1) == ProcessState.OPEN.value

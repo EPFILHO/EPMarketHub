@@ -53,6 +53,14 @@ class FakeQTimer:
         pass
 
 
+class FakeQCoreApplication:
+    process_events_calls = 0
+
+    @classmethod
+    def processEvents(cls) -> None:
+        cls.process_events_calls += 1
+
+
 class FakeQUrl:
     @staticmethod
     def fromLocalFile(path: str) -> str:
@@ -68,6 +76,7 @@ def install_qt_stubs() -> None:
     pyside = ModuleType("PySide6")
     pyside.__path__ = []
     qtcore = ModuleType("PySide6.QtCore")
+    qtcore.QCoreApplication = FakeQCoreApplication
     qtcore.QEvent = FakeQEvent
     qtcore.QObject = FakeQObject
     qtcore.QTimer = FakeQTimer
@@ -555,6 +564,18 @@ def test_stop_terminal_distinguishes_close_failure_from_already_closed(tmp_path:
     assert response["ok"] is False
     assert response["data"]["mt5_running"] is True
     assert terminal["process_state"] == "close_failed"
+
+
+def test_stop_terminal_publishes_closing_before_blocking_operation(tmp_path: Path) -> None:
+    bridge, terminal_manager, _ = build_bridge(tmp_path, ["one"])
+    terminal_manager.open_ids.add("one")
+    previous_calls = FakeQCoreApplication.process_events_calls
+
+    bridge.stopTerminal("one")
+
+    assert FakeQCoreApplication.process_events_calls == previous_calls + 1
+    published = json.loads(bridge.terminalsChanged.values[-2])[0]
+    assert published["process_state"] == "closing"
 
 
 def test_late_worker_event_does_not_hide_terminal_close_failure(tmp_path: Path) -> None:

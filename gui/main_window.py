@@ -7,7 +7,7 @@ from dataclasses import replace
 from pathlib import Path
 from uuid import uuid4
 
-from PySide6.QtCore import QEvent, QObject, QTimer, QUrl, Signal, Slot
+from PySide6.QtCore import QCoreApplication, QEvent, QObject, QTimer, QUrl, Signal, Slot
 from PySide6.QtGui import QCloseEvent, QColor
 from PySide6.QtWebChannel import QWebChannel
 from PySide6.QtWebEngineWidgets import QWebEngineView
@@ -195,6 +195,12 @@ class MarketHubBridge(QObject):
 
     def _emit_terminals(self) -> None:
         self.terminalsChanged.emit(json.dumps(self._terminals_payload(), ensure_ascii=False))
+
+    def _publish_terminal_transition(self) -> None:
+        """Entrega a transição ao QWebEngine antes de uma operação bloqueante."""
+
+        self._emit_terminals()
+        QCoreApplication.processEvents()
 
     def _emit_live_streams(self) -> None:
         self.liveStreamStatusChanged.emit(
@@ -616,6 +622,7 @@ class MarketHubBridge(QObject):
             if not profile:
                 return fail("Terminal não encontrado.")
             self.process_states.set(terminal_id, ProcessState.CLOSING)
+            self._publish_terminal_transition()
             _, worker_message = self.worker_manager.stop_worker(terminal_id)
             worker_still_running = self.worker_manager.is_running(terminal_id)
             stopped = (
@@ -933,6 +940,7 @@ class MarketHubBridge(QObject):
                     failures += 1
                     continue
                 self.process_states.set(terminal_id, ProcessState.CLOSING)
+                self._publish_terminal_transition()
                 self.worker_manager.clear_live_streams_for_terminal(terminal_id)
                 _, worker_message = self.worker_manager.stop_worker(terminal_id)
                 worker_still_running = self.worker_manager.is_running(terminal_id)

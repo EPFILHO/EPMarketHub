@@ -169,24 +169,26 @@ class TerminalProcessStateMachine:
         running: bool,
         process_count: int,
     ) -> str:
+        transition = self._transitions.get(terminal_id)
+        if transition in {
+            ProcessState.OPENING.value,
+            ProcessState.CLOSING.value,
+            ProcessState.REOPENING.value,
+        }:
+            if transition == ProcessState.CLOSING.value and not running:
+                self.clear(terminal_id)
+                return ProcessState.CLOSED.value
+            return transition
+
         if process_count > 1:
             return ProcessState.DUPLICATE.value
 
-        transition = self._transitions.get(terminal_id)
-        if transition == ProcessState.CLOSING.value and not running:
-            self.clear(terminal_id)
-            return ProcessState.CLOSED.value
         if transition == ProcessState.CLOSE_FAILED.value and not running:
             self.clear(terminal_id)
             return ProcessState.CLOSED.value
         if transition == ProcessState.LAUNCH_FAILED.value and running:
             self.clear(terminal_id)
             return ProcessState.OPEN.value
-        if transition in {
-            ProcessState.OPENING.value,
-            ProcessState.REOPENING.value,
-        } and not running:
-            return transition
         if transition:
             return transition
         return ProcessState.OPEN.value if running else ProcessState.CLOSED.value
