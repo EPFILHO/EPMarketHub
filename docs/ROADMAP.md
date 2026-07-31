@@ -14,11 +14,15 @@
 - Preservar protocolo v1, polling, temporizações, limites e confirmação real de processos.
 - Validar manualmente no Windows com MT5 reais antes de publicar ou avançar a `main`.
 
-## 0.4.12 — numeração e ícones MT5
+## 0.4.12 — fundação visual e organização
 
-- Iniciar somente após aprovação manual da 0.4.11.
+- Preservar integralmente o kernel e o protocolo congelados na `v0.4.11-baseline`.
+- Oferecer tema claro como padrão e tema escuro opcional, sem depender da bridge.
+- Separar Dashboard de saúde, gestão de Terminais MT5, Ativos e Diagnóstico.
+- Manter os três fluxos simultâneos e o snapshot como ferramentas de diagnóstico.
 - Tratar a numeração como apresentação derivada da ordem alfabética, nunca como ID persistido.
-- Avaliar os ícones numerados sem alterar workers, protocolo ou kernel.
+- Adicionar ícones internos e avaliar identificação externa sem modificar executáveis, workers, protocolo ou kernel.
+- Extrair apenas módulos frontend pequenos, independentes e caracterizados; a divisão estrutural da bridge e dos consumidores continua reservada para a 0.5.
 
 ## 0.4.10 — fechamento do kernel
 

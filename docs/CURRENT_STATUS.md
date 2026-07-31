@@ -1,6 +1,16 @@
-# Status atual — 0.4.11
+# Status atual — 0.4.12 em desenvolvimento
 
-A 0.4.11 preserva o kernel 0.4.10 validado e remove da thread gráfica as esperas de encerramento. Não adiciona análises, candles, banco local, novos módulos de negócio, numeração ou ícones.
+A baseline `v0.4.11-baseline` preserva o kernel 0.4.10 validado e mantém fora da thread gráfica as esperas de encerramento. A 0.4.12 evolui somente a camada de apresentação: organização das telas, temas, navegação, ícones internos e numeração visual derivada. Não adiciona análises, candles, banco local, novos módulos de negócio nem altera o kernel.
+
+## Escopo aprovado para a 0.4.12
+
+- Tema claro como padrão e tema escuro opcional, com preferência local persistida.
+- Dashboard de saúde usando somente estados reais já fornecidos pela bridge.
+- Gestão de instâncias concentrada em **Terminais MT5**.
+- Fluxos simultâneos e snapshot consolidados preservados em **Diagnóstico**.
+- Numeração visual calculada pela ordem alfabética exibida, nunca persistida nem usada como identidade.
+- Ícones somente na interface; nenhuma modificação de `terminal64.exe` nesta etapa.
+- Pequenas extrações do JavaScript monolítico somente quando independentes do QWebChannel e cobertas por testes.
 
 ## GUI responsiva 0.4.11
 
@@ -57,7 +67,7 @@ A 0.4.11 preserva o kernel 0.4.10 validado e remove da thread gráfica as espera
 
 - A 0.4.9 foi validada manualmente no Windows com MT5 reais em 17 de julho de 2026.
 - A 0.4.10 foi validada manualmente no Windows com MT5 reais.
-- A 0.4.11 passa pela suíte automatizada multiplataforma e pelos testes de regras JavaScript; a validação manual final com MT5 reais permanece pendente.
+- A 0.4.11 passou pela suíte automatizada e pela validação manual final com MT5 reais; foi publicada e congelada como `v0.4.11-baseline`.
 - Ciclo de cadastro, exclusão, relançamento simultâneo de três MT5 e fluxos foi validado manualmente em 18 de julho de 2026.
 - Os fluxos iniciais de reconciliação de instância ausente foram validados manualmente em 18 de julho de 2026.
 
