@@ -21,6 +21,25 @@ assert.deepEqual(
   ordered.map(row => `${row.label}:${row.broker_name}:${row.account_login}`),
   ['Terminal 2:A:3', 'terminal 2:Z:1', 'Terminal 10:Z:2'],
 );
+const originalTerminals = [
+  { id: 'z', label: 'Zulu' },
+  { id: 'a', label: 'Alpha' },
+  { id: 'm', label: 'Mike' },
+];
+const numbered = ui.numberTerminals(originalTerminals);
+assert.deepEqual(
+  numbered.map(row => `${row.id}:${row.display_number}`),
+  ['a:1', 'm:2', 'z:3'],
+);
+assert.equal(ui.terminalDisplayNumber(numbered[0]), '01');
+assert.equal(ui.terminalDisplayNumber({ display_number: 12 }), '12');
+assert.equal(ui.terminalDisplayNumber({}), '—');
+const renumbered = ui.numberTerminals(numbered.filter(row => row.id !== 'a'));
+assert.deepEqual(
+  renumbered.map(row => `${row.id}:${row.display_number}`),
+  ['m:1', 'z:2'],
+);
+assert.equal(Object.hasOwn(originalTerminals[0], 'display_number'), false);
 
 function classList() {
   const values = new Set();

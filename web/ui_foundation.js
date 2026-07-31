@@ -116,6 +116,18 @@
     );
   }
 
+  function numberTerminals(rows) {
+    return (Array.isArray(rows) ? rows : [])
+      .slice()
+      .sort(compareTerminal)
+      .map((terminal, index) => ({ ...terminal, display_number: index + 1 }));
+  }
+
+  function terminalDisplayNumber(terminal) {
+    const value = Number(terminal?.display_number);
+    return Number.isInteger(value) && value > 0 ? String(value).padStart(2, '0') : '—';
+  }
+
   function terminalNeedsAttention(terminal, worker = {}) {
     const instanceState = terminal?.instance_status?.state || 'ready';
     if (instanceState !== 'ready') return true;
@@ -164,9 +176,11 @@
     compareTerminal,
     initializeTheme,
     normalizeTheme,
+    numberTerminals,
     setTheme,
     storedTheme,
     switchView,
+    terminalDisplayNumber,
     terminalHealthSummary,
     terminalNeedsAttention,
   });

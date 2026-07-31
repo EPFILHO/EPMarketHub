@@ -303,7 +303,7 @@ function populateSnapshotTerminalSelector() {
   connected.forEach(t => {
     const option = document.createElement('option');
     option.value = t.id;
-    option.textContent = `${t.label || t.id}${t.broker_name ? ` · ${t.broker_name}` : ''}`;
+    option.textContent = `${MarketHubUI.terminalDisplayNumber(t)} · ${t.label || t.id}${t.broker_name ? ` · ${t.broker_name}` : ''}`;
     select.appendChild(option);
   });
   select.value = connected.some(t => t.id === before) ? before : connected[0].id;
@@ -527,7 +527,7 @@ function terminalActionState(terminal, worker, openCount, activeWorkerCount, max
 }
 
 function renderTerminals(rows) {
-  terminals = (rows || []).slice().sort(compareTerminal);
+  terminals = MarketHubUI.numberTerminals(rows);
   const selectedCountBeforeHealthCheck = selectedTerminalIds.size;
   terminals.forEach(terminal => {
     if (!terminalInstanceReady(terminal) || terminal.enabled === false) {
@@ -583,9 +583,12 @@ function renderTerminals(rows) {
           </label>
         </div>
         <div class="terminal-title">
-          <div>
-            <strong>${escapeHtml(t.label || t.id)}</strong>
-            <div class="muted">${escapeHtml(t.broker_name || 'Corretora não informada')} · ${escapeHtml(t.account_login || 'login manual')}</div>
+          <div class="terminal-identity">
+            <span class="terminal-number" aria-label="Terminal ${escapeHtml(MarketHubUI.terminalDisplayNumber(t))}">${escapeHtml(MarketHubUI.terminalDisplayNumber(t))}</span>
+            <div>
+              <strong>${escapeHtml(t.label || t.id)}</strong>
+              <div class="muted">${escapeHtml(t.broker_name || 'Corretora não informada')} · ${escapeHtml(t.account_login || 'login manual')}</div>
+            </div>
           </div>
           <div class="badge-stack">
             <span class="badge mt5-badge ${terminalProcessBadgeClass(t, worker)}">${escapeHtml(terminalProcessLabel(t, worker))}</span>
@@ -743,7 +746,9 @@ function updateWorkersStatus() {
 function renderWorkerSummary() {
   const el = document.getElementById('workerSummary');
   const connected = connectedTerminals();
-  const signature = connected.map(t => t.id).join('|');
+  const signature = connected
+    .map(t => `${t.id}:${t.display_number || ''}:${t.label || ''}`)
+    .join('|');
   if (!connected.length) {
     if (el.innerHTML) el.innerHTML = '';
     workerSummarySignature = '';
@@ -753,7 +758,7 @@ function renderWorkerSummary() {
     el.innerHTML = connected.map(t => `
       <article class="summary-card connected" id="summary-${escapeHtml(t.id)}">
         <div class="summary-top">
-          <strong>${escapeHtml(t.label || t.id)}</strong>
+          <div class="summary-identity"><span class="terminal-number compact">${escapeHtml(MarketHubUI.terminalDisplayNumber(t))}</span><strong>${escapeHtml(t.label || t.id)}</strong></div>
           <span class="status-dot ok"></span>
         </div>
         <div class="summary-value"></div>
@@ -821,9 +826,12 @@ function renderDashboardHealth() {
     const worker = workerStates[terminal.id] || terminal.worker || {};
     return `
       <div class="dashboard-terminal-row">
-        <div class="dashboard-terminal-name">
-          <strong>${escapeHtml(terminal.label || terminal.id)}</strong>
-          <small>${escapeHtml(terminal.broker_name || 'Corretora não informada')} · ${escapeHtml(terminal.account_login || 'login manual')}</small>
+        <div class="dashboard-terminal-identity">
+          <span class="terminal-number">${escapeHtml(MarketHubUI.terminalDisplayNumber(terminal))}</span>
+          <div class="dashboard-terminal-name">
+            <strong>${escapeHtml(terminal.label || terminal.id)}</strong>
+            <small>${escapeHtml(terminal.broker_name || 'Corretora não informada')} · ${escapeHtml(terminal.account_login || 'login manual')}</small>
+          </div>
         </div>
         <div class="dashboard-terminal-badges">
           <span class="badge ${terminalProcessBadgeClass(terminal, worker)}">${escapeHtml(terminalProcessLabel(terminal, worker))}</span>
@@ -875,7 +883,7 @@ function populateLiveTerminalSelectors() {
     connected.forEach(t => {
       const opt = document.createElement('option');
       opt.value = t.id;
-      opt.textContent = `${t.label || t.id}${t.broker_name ? ` · ${t.broker_name}` : ''}`;
+      opt.textContent = `${MarketHubUI.terminalDisplayNumber(t)} · ${t.label || t.id}${t.broker_name ? ` · ${t.broker_name}` : ''}`;
       select.appendChild(opt);
     });
 
@@ -884,7 +892,7 @@ function populateLiveTerminalSelectors() {
       const opt = document.createElement('option');
       opt.value = configuredId;
       opt.disabled = true;
-      opt.textContent = `${profile?.label || row.config?.terminal_label || configuredId} · MT5 fechado`;
+      opt.textContent = `${MarketHubUI.terminalDisplayNumber(profile)} · ${profile?.label || row.config?.terminal_label || configuredId} · MT5 fechado`;
       select.appendChild(opt);
     }
 
