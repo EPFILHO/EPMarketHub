@@ -24,6 +24,6 @@ Validar manualmente a fundação visual 0.4.12 no runtime real do Windows, prese
 ## Entrega esperada
 
 - Tema claro e escuro aprovados no QWebEngine real.
-- Dashboard orientado a mercado, fontes secundárias, navegação, Diagnóstico e numeração coerentes com o estado observado.
+- Dashboard orientado a mercado, cabeçalho operacional compacto, navegação, Diagnóstico e numeração coerentes com o estado observado.
 - Confirmação de que a evolução visual não regrediu conexão, leitura nem shutdown.
 - Decisão explícita do proprietário antes de publicação.

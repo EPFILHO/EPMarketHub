@@ -341,5 +341,6 @@ assert.doesNotMatch(source, /max_active_mt5\s*\|\|\s*3/);
 assert.match(context.renderTerminals.toString(), /MarketHubUI\.numberTerminals\(rows\)/);
 assert.match(source, /MarketHubUI\.terminalDisplayNumber/);
 assert.doesNotMatch(source, /localStorage\.setItem\([^\n]*display_number/);
+assert.match(context.updateWorkersStatus.toString(), /capacidade MT5: \$\{alive\} de \$\{limit/);
 
 console.log('web app state tests passed');

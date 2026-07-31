@@ -6,7 +6,7 @@ A baseline `v0.4.11-baseline` preserva o kernel 0.4.10 validado e mantém fora d
 
 - Tema claro como padrão e tema escuro opcional, com preferência local persistida e fallback seguro sem armazenamento.
 - Dashboard orientado aos dados de mercado, consolidando somente Bid, Ask e spread efetivamente recebidos de fontes conectadas, com fonte e idade do pacote explícitas; fontes paradas deixam a visão de mercado sem apagar o cache diagnóstico.
-- Saúde da ponte, processos, leituras e condições que exigem atenção mantida como resumo secundário de fontes de dados.
+- Cabeçalho global reduzido a conectadas, capacidade simultânea e estado da ponte; cadastros, processos e condições detalhadas permanecem nas telas operacionais, sem ocupar um card próprio no Dashboard.
 - Gestão de instâncias concentrada em **Terminais MT5**, com os mesmos fluxos de criação, edição, abertura, leitura, fechamento e exclusão.
 - Fluxos simultâneos e snapshot consolidados preservados em **Diagnóstico**, com os mesmos IDs e handlers da baseline.
 - Numeração visual calculada pela ordem alfabética exibida, recalculada a cada payload e nunca persistida nem usada como identidade.

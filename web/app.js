@@ -256,7 +256,7 @@ function setBridgeStatus(ok, text) {
   const el = document.getElementById('bridgeStatus');
   el.textContent = text;
   el.classList.toggle('ok', ok);
-  renderDashboardHealth();
+  refreshDashboardMarketSources();
 }
 
 function switchView(view) {
@@ -483,7 +483,7 @@ function renderTerminals(rows) {
     refreshDashboardTerminalSources(true);
     updateWorkersStatus();
     renderWorkerSummary();
-    renderDashboardHealth();
+    refreshDashboardMarketSources();
     renderDashboardMarket();
     applyLifecycleBusyState();
     return;
@@ -554,7 +554,7 @@ function renderTerminals(rows) {
   refreshDashboardTerminalSources(true);
   updateWorkersStatus();
   renderWorkerSummary();
-  renderDashboardHealth();
+  refreshDashboardMarketSources();
   renderDashboardMarket();
   renderSelectedSnapshot();
   applyLifecycleBusyState();
@@ -658,7 +658,7 @@ function applyWorkerStates(rows) {
   updateWorkersStatus();
   refreshDashboardTerminalSources();
   renderWorkerSummary();
-  renderDashboardHealth();
+  refreshDashboardMarketSources();
   LIVE_SLOT_IDS.forEach((_, index) => renderLiveSlot(index + 1));
   applyLifecycleBusyState();
   updateLiveProof();
@@ -670,7 +670,8 @@ function updateWorkersStatus() {
   const connected = all.filter(w => w.connected).length;
   const el = document.getElementById('workersStatus');
   const limit = activeTerminalLimit();
-  el.textContent = `Leituras: ${connected} conectadas · ${alive}/${limit || '—'} ativas`;
+  const connectedLabel = connected === 1 ? 'conectada' : 'conectadas';
+  el.textContent = `Coleta: ${connected} ${connectedLabel} · capacidade MT5: ${alive} de ${limit || '—'}`;
   el.classList.toggle('ok', connected > 0);
   const stopAllButton = document.getElementById('btnStopAll');
   stopAllButton.disabled = lifecycleAnyBusy() || alive === 0;
@@ -714,33 +715,7 @@ function renderWorkerSummary() {
   });
 }
 
-function renderDashboardHealth() {
-  const summary = MarketHubUI.terminalHealthSummary(terminals, workerStates);
-  const sourcesCard = document.getElementById('dashboardSourcesCard');
-  const sourcesDot = document.getElementById('dashboardSourcesDot');
-  const bridgeValue = document.getElementById('dashboardBridgeValue');
-  const connectedValue = document.getElementById('dashboardConnectedValue');
-  const openValue = document.getElementById('dashboardOpenValue');
-  const attentionValue = document.getElementById('dashboardAttentionValue');
-  const sourcesDetail = document.getElementById('dashboardSourcesDetail');
-  const operational = bridgeReady && summary.attention === 0;
-
-  sourcesCard?.classList.toggle('healthy', operational);
-  sourcesCard?.classList.toggle('attention', !operational);
-  if (sourcesDot) sourcesDot.className = `status-dot ${operational ? 'ok' : 'warn'}`;
-  setTextIfChanged(bridgeValue, bridgeReady ? 'Conectada' : 'Conectando');
-  setTextIfChanged(connectedValue, `${summary.connected} / ${summary.registered}`);
-  setTextIfChanged(openValue, summary.open);
-  setTextIfChanged(attentionValue, summary.attention);
-  setTextIfChanged(
-    sourcesDetail,
-    !bridgeReady
-      ? 'Aguardando a comunicação local com o processo Python.'
-      : (summary.attention > 0
-        ? 'Há uma condição operacional explícita. Consulte Terminais MT5 para ver a causa real.'
-        : 'A infraestrutura de coleta não apresenta pendências confirmadas.'),
-  );
-
+function refreshDashboardMarketSources() {
   const sourceSignature = connectedMarketSourceIds().sort().join('|');
   if (dashboardMarketSourceSignature !== sourceSignature) {
     dashboardMarketSourceSignature = sourceSignature;

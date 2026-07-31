@@ -67,7 +67,7 @@
             <span class="theme-toggle-icon" data-theme-icon aria-hidden="true">☾</span>
             <span data-theme-label>Tema escuro</span>
           </button>
-          <div class="status-pill" id="workersStatus" role="status" aria-live="polite">Leituras: 0 ativas</div>
+          <div class="status-pill" id="workersStatus" role="status" aria-live="polite">Coleta: 0 conectadas · capacidade MT5: 0 de —</div>
           <div class="status-pill" id="bridgeStatus" role="status" aria-live="polite">Conectando à ponte Python...</div>
         </div>
       </header>
@@ -108,26 +108,6 @@
             <div id="dashboardMarketQuotes" class="market-quotes empty">Aguardando as primeiras cotações dos MT5 conectados.</div>
           </section>
 
-          <aside class="card data-sources-card" id="dashboardSourcesCard">
-            <div class="card-head compact-head">
-              <div>
-                <h3>Fontes de dados</h3>
-                <p class="muted">Resumo operacional da coleta.</p>
-              </div>
-              <span class="status-dot" id="dashboardSourcesDot"></span>
-            </div>
-            <div class="data-source-summary">
-              <div><span>Ponte local</span><strong id="dashboardBridgeValue">Conectando</strong></div>
-              <div><span>Leituras conectadas</span><strong id="dashboardConnectedValue">0 / 0</strong></div>
-              <div><span>MT5 abertos</span><strong id="dashboardOpenValue">0</strong></div>
-              <div><span>Requer atenção</span><strong id="dashboardAttentionValue">0</strong></div>
-            </div>
-            <p id="dashboardSourcesDetail" class="data-sources-detail">Aguardando a comunicação local com o processo Python.</p>
-            <div class="actions source-actions">
-              <button type="button" data-view-target="terminals">Gerenciar fontes</button>
-              <button type="button" data-view-target="diagnostics">Diagnóstico</button>
-            </div>
-          </aside>
         </section>
       </section>
 

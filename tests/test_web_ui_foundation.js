@@ -205,7 +205,7 @@ const dashboardMarkup = html.split('id="view-dashboard"')[1].split('id="view-ter
 const diagnosticsMarkup = html.split('id="view-diagnostics"')[1];
 assert.match(dashboardMarkup, /id="dashboardMarketQuotes"/);
 assert.match(dashboardMarkup, /id="marketQuotedAssets"/);
-assert.match(dashboardMarkup, /id="dashboardSourcesCard"/);
+assert.doesNotMatch(dashboardMarkup, /id="dashboardSourcesCard"/);
 assert.doesNotMatch(dashboardMarkup, /id="dashboardTerminalHealth"/);
 assert.doesNotMatch(dashboardMarkup, /id="liveProof"/);
 assert.match(diagnosticsMarkup, /id="workerSummary"/);
