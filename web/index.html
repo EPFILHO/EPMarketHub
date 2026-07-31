@@ -73,53 +73,61 @@
       </header>
 
       <section class="view active" id="view-dashboard">
-        <section class="health-grid" aria-label="Resumo do sistema">
-          <article class="health-metric">
-            <span class="health-label">Terminais cadastrados</span>
-            <strong id="healthRegistered">0</strong>
-            <small>Instâncias controladas</small>
+        <section class="market-metric-grid" aria-label="Resumo dos dados de mercado">
+          <article class="market-metric">
+            <span class="metric-label">Ativos cotados</span>
+            <strong id="marketQuotedAssets">0</strong>
+            <small>Ativos com dados recebidos</small>
           </article>
-          <article class="health-metric">
-            <span class="health-label">MT5 abertos</span>
-            <strong id="healthOpen">0</strong>
-            <small>Processos confirmados</small>
+          <article class="market-metric">
+            <span class="metric-label">Cotações disponíveis</span>
+            <strong id="marketQuoteCount">0</strong>
+            <small>Combinações de ativo e fonte</small>
           </article>
-          <article class="health-metric">
-            <span class="health-label">Leituras conectadas</span>
-            <strong id="healthConnected">0</strong>
-            <small>Sessões prontas</small>
+          <article class="market-metric">
+            <span class="metric-label">Fontes com dados</span>
+            <strong id="marketDataSources">0</strong>
+            <small>Terminais presentes nas cotações</small>
           </article>
-          <article class="health-metric" id="healthAttentionMetric">
-            <span class="health-label">Requer atenção</span>
-            <strong id="healthAttention" aria-live="polite">0</strong>
-            <small>Diagnósticos explícitos</small>
+          <article class="market-metric">
+            <span class="metric-label">Último dado</span>
+            <strong id="marketLastUpdate" class="market-last-update">—</strong>
+            <small>Idade do pacote mais recente</small>
           </article>
         </section>
 
-        <section class="dashboard-grid">
-          <section class="card dashboard-terminal-card">
+        <section class="market-dashboard-grid">
+          <section class="card market-quotes-card">
             <div class="card-head">
               <div>
-                <h3>Estado dos terminais</h3>
-                <p class="muted">Situação atual de cada instância cadastrada, sem dados simulados.</p>
+                <h3>Cotações recebidas</h3>
+                <p class="muted">Último dado real disponível para cada ativo e fonte, sem preenchimento simulado.</p>
               </div>
-              <button type="button" data-view-target="terminals">Gerenciar terminais</button>
+              <button type="button" data-view-target="diagnostics">Abrir diagnóstico</button>
             </div>
-            <div id="dashboardTerminalHealth" class="dashboard-terminal-list empty" aria-live="polite">Nenhum terminal cadastrado ainda.</div>
+            <div id="dashboardMarketQuotes" class="market-quotes empty">Aguardando as primeiras cotações dos MT5 conectados.</div>
           </section>
 
-          <div class="dashboard-side-stack">
-            <article class="card dashboard-state-card" id="dashboardBridgeCard">
-              <div class="summary-top"><span class="health-label">Comunicação local</span><span class="status-dot"></span></div>
-              <strong id="dashboardBridgeValue">Conectando</strong>
-              <p id="dashboardBridgeDetail">Aguardando a comunicação local com o processo Python.</p>
-            </article>
-            <article class="card dashboard-state-card" id="dashboardAttentionCard">
-              <div class="summary-top"><span class="health-label">Integridade operacional</span><span class="status-dot"></span></div>
-              <strong id="dashboardAttentionValue">Nenhuma pendência</strong>
-              <p id="dashboardAttentionDetail">Nenhuma falha confirmada nas instâncias cadastradas.</p>
-            </article>
-          </div>
+          <aside class="card data-sources-card" id="dashboardSourcesCard">
+            <div class="card-head compact-head">
+              <div>
+                <h3>Fontes de dados</h3>
+                <p class="muted">Resumo operacional da coleta.</p>
+              </div>
+              <span class="status-dot" id="dashboardSourcesDot"></span>
+            </div>
+            <div class="data-source-summary">
+              <div><span>Ponte local</span><strong id="dashboardBridgeValue">Conectando</strong></div>
+              <div><span>Leituras conectadas</span><strong id="dashboardConnectedValue">0 / 0</strong></div>
+              <div><span>MT5 abertos</span><strong id="dashboardOpenValue">0</strong></div>
+              <div><span>Requer atenção</span><strong id="dashboardAttentionValue">0</strong></div>
+            </div>
+            <p id="dashboardSourcesDetail" class="data-sources-detail">Aguardando a comunicação local com o processo Python.</p>
+            <div class="actions source-actions">
+              <button type="button" data-view-target="terminals">Gerenciar fontes</button>
+              <button type="button" data-view-target="diagnostics">Diagnóstico</button>
+            </div>
+          </aside>
         </section>
       </section>
 

@@ -5,7 +5,8 @@ A baseline `v0.4.11-baseline` preserva o kernel 0.4.10 validado e mantém fora d
 ## Interface 0.4.12 implementada localmente
 
 - Tema claro como padrão e tema escuro opcional, com preferência local persistida e fallback seguro sem armazenamento.
-- Dashboard de saúde usando somente estados reais já fornecidos pela bridge: cadastros, processos abertos, leituras conectadas e diagnósticos que exigem atenção.
+- Dashboard orientado aos dados de mercado, consolidando somente Bid, Ask e spread efetivamente recebidos nos snapshots e fluxos ao vivo, com fonte e idade do pacote explícitas.
+- Saúde da ponte, processos, leituras e condições que exigem atenção mantida como resumo secundário de fontes de dados.
 - Gestão de instâncias concentrada em **Terminais MT5**, com os mesmos fluxos de criação, edição, abertura, leitura, fechamento e exclusão.
 - Fluxos simultâneos e snapshot consolidados preservados em **Diagnóstico**, com os mesmos IDs e handlers da baseline.
 - Numeração visual calculada pela ordem alfabética exibida, recalculada a cada payload e nunca persistida nem usada como identidade.
@@ -79,4 +80,4 @@ A baseline `v0.4.11-baseline` preserva o kernel 0.4.10 validado e mantém fora d
 - A ponte PySide/QWebChannel ainda está concentrada em `gui/main_window.py`.
 - Processos reais, QWebEngine e a biblioteca `MetaTrader5` não são exercitados pela suíte multiplataforma.
 - Splashscreen e identificação externa das janelas MT5 permanecem como evoluções futuras.
-- O Dashboard agora apresenta saúde operacional; a bancada visual de três fluxos foi preservada em **Diagnóstico**.
+- O Dashboard agora apresenta as cotações reais disponíveis; sem dados recebidos, apresenta estado vazio. A saúde operacional ficou secundária e a bancada visual de três fluxos foi preservada em **Diagnóstico**.

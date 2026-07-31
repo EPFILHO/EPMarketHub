@@ -18,7 +18,7 @@
 
 - Preservar integralmente o kernel e o protocolo congelados na `v0.4.11-baseline`.
 - Oferecer tema claro como padrão e tema escuro opcional, sem depender da bridge.
-- Separar Dashboard de saúde, gestão de Terminais MT5, Ativos e Diagnóstico.
+- Separar Dashboard de mercado, gestão de Terminais MT5, Ativos e Diagnóstico; manter a saúde das fontes em posição secundária.
 - Manter os três fluxos simultâneos e o snapshot como ferramentas de diagnóstico.
 - Tratar a numeração como apresentação derivada da ordem alfabética, nunca como ID persistido.
 - Adicionar ícones internos e avaliar identificação externa sem modificar executáveis, workers, protocolo ou kernel.

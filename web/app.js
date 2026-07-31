@@ -713,69 +713,81 @@ function renderWorkerSummary() {
 
 function renderDashboardHealth() {
   const summary = MarketHubUI.terminalHealthSummary(terminals, workerStates);
-  setTextIfChanged(document.getElementById('healthRegistered'), summary.registered);
-  setTextIfChanged(document.getElementById('healthOpen'), summary.open);
-  setTextIfChanged(document.getElementById('healthConnected'), summary.connected);
-  setTextIfChanged(document.getElementById('healthAttention'), summary.attention);
-  const attentionMetric = document.getElementById('healthAttentionMetric');
-  attentionMetric?.classList.toggle('healthy', summary.attention === 0);
-  attentionMetric?.classList.toggle('attention', summary.attention > 0);
-
-  const bridgeCard = document.getElementById('dashboardBridgeCard');
+  const sourcesCard = document.getElementById('dashboardSourcesCard');
+  const sourcesDot = document.getElementById('dashboardSourcesDot');
   const bridgeValue = document.getElementById('dashboardBridgeValue');
-  const bridgeDetail = document.getElementById('dashboardBridgeDetail');
-  bridgeCard?.classList.toggle('healthy', bridgeReady);
-  bridgeCard?.classList.toggle('attention', !bridgeReady);
-  setTextIfChanged(bridgeValue, bridgeReady ? 'Ponte conectada' : 'Conectando');
-  setTextIfChanged(
-    bridgeDetail,
-    bridgeReady
-      ? `${summary.connected} leitura(s) conectada(s) em ${summary.workers} worker(s) ativo(s).`
-      : 'Aguardando a comunicação local com o processo Python.',
-  );
-
-  const attentionCard = document.getElementById('dashboardAttentionCard');
+  const connectedValue = document.getElementById('dashboardConnectedValue');
+  const openValue = document.getElementById('dashboardOpenValue');
   const attentionValue = document.getElementById('dashboardAttentionValue');
-  const attentionDetail = document.getElementById('dashboardAttentionDetail');
-  attentionCard?.classList.toggle('healthy', summary.attention === 0);
-  attentionCard?.classList.toggle('attention', summary.attention > 0);
+  const sourcesDetail = document.getElementById('dashboardSourcesDetail');
+  const operational = bridgeReady && summary.attention === 0;
+
+  sourcesCard?.classList.toggle('healthy', operational);
+  sourcesCard?.classList.toggle('attention', !operational);
+  if (sourcesDot) sourcesDot.className = `status-dot ${operational ? 'ok' : 'warn'}`;
+  setTextIfChanged(bridgeValue, bridgeReady ? 'Conectada' : 'Conectando');
+  setTextIfChanged(connectedValue, `${summary.connected} / ${summary.registered}`);
+  setTextIfChanged(openValue, summary.open);
+  setTextIfChanged(attentionValue, summary.attention);
   setTextIfChanged(
-    attentionValue,
-    summary.attention === 0 ? 'Nenhuma pendência' : `${summary.attention} requer atenção`,
+    sourcesDetail,
+    !bridgeReady
+      ? 'Aguardando a comunicação local com o processo Python.'
+      : (summary.attention > 0
+        ? 'Há uma condição operacional explícita. Consulte Terminais MT5 para ver a causa real.'
+        : 'A infraestrutura de coleta não apresenta pendências confirmadas.'),
   );
+}
+
+function renderDashboardMarket() {
+  const summary = MarketHubUI.marketQuoteSummary(snapshots, liveTicks);
+  setTextIfChanged(document.getElementById('marketQuotedAssets'), summary.assets);
+  setTextIfChanged(document.getElementById('marketQuoteCount'), summary.quotes.length);
+  setTextIfChanged(document.getElementById('marketDataSources'), summary.sources);
   setTextIfChanged(
-    attentionDetail,
-    summary.attention === 0
-      ? 'Nenhuma falha confirmada nas instâncias cadastradas.'
-      : 'Consulte os badges em Terminais MT5 para ver a causa real.',
+    document.getElementById('marketLastUpdate'),
+    summary.lastUpdated ? formatAge(ageSeconds(summary.lastUpdated)) : '—',
   );
 
-  const list = document.getElementById('dashboardTerminalHealth');
+  const list = document.getElementById('dashboardMarketQuotes');
   if (!list) return;
-  if (!terminals.length) {
-    list.className = 'dashboard-terminal-list empty';
-    list.textContent = 'Nenhum terminal cadastrado ainda.';
+  if (!summary.quotes.length) {
+    list.className = 'market-quotes empty';
+    list.textContent = 'Aguardando as primeiras cotações dos MT5 conectados.';
     return;
   }
-  list.className = 'dashboard-terminal-list';
-  list.innerHTML = terminals.map(terminal => {
-    const worker = workerStates[terminal.id] || terminal.worker || {};
-    return `
-      <div class="dashboard-terminal-row">
-        <div class="dashboard-terminal-identity">
-          <span class="terminal-number">${escapeHtml(MarketHubUI.terminalDisplayNumber(terminal))}</span>
-          <div class="dashboard-terminal-name">
-            <strong>${escapeHtml(terminal.label || terminal.id)}</strong>
-            <small>${escapeHtml(terminal.broker_name || 'Corretora não informada')} · ${escapeHtml(terminal.account_login || 'login manual')}</small>
-          </div>
-        </div>
-        <div class="dashboard-terminal-badges">
-          <span class="badge ${terminalProcessBadgeClass(terminal, worker)}">${escapeHtml(terminalProcessLabel(terminal, worker))}</span>
-          <span class="badge ${workerBadgeClass(worker)}">${escapeHtml(workerLabel(worker.state))}</span>
-        </div>
-      </div>
-    `;
-  }).join('');
+  list.className = 'market-quotes table-wrap market-table-wrap';
+  list.innerHTML = `
+    <table>
+      <thead><tr><th>Ativo</th><th>Bid</th><th>Ask</th><th>Spread</th><th>Fonte</th><th>Recebido</th></tr></thead>
+      <tbody>
+        ${summary.quotes.map(quote => {
+          const terminal = terminals.find(row => row.id === quote.terminalId);
+          return `
+            <tr>
+              <td><div class="market-asset"><strong>${escapeHtml(quote.name)}</strong><small>${escapeHtml(quote.symbol || 'símbolo não informado')}</small></div></td>
+              <td class="market-price">${formatNumber(quote.bid)}</td>
+              <td class="market-price">${formatNumber(quote.ask)}</td>
+              <td class="market-price">${formatNumber(quote.spread)}</td>
+              <td><div class="market-source-identity"><span class="terminal-number compact">${escapeHtml(MarketHubUI.terminalDisplayNumber(terminal))}</span><div class="market-source"><strong>${escapeHtml(quote.terminalLabel)}</strong><small>${escapeHtml(quote.brokerName || 'corretora não informada')}</small></div></div></td>
+              <td data-market-received-at="${escapeHtml(quote.receivedAt)}">${escapeHtml(formatAge(ageSeconds(quote.receivedAt)))}</td>
+            </tr>
+          `;
+        }).join('')}
+      </tbody>
+    </table>
+  `;
+}
+
+function refreshDashboardMarketAges() {
+  const summary = MarketHubUI.marketQuoteSummary(snapshots, liveTicks);
+  setTextIfChanged(
+    document.getElementById('marketLastUpdate'),
+    summary.lastUpdated ? formatAge(ageSeconds(summary.lastUpdated)) : '—',
+  );
+  document.querySelectorAll('[data-market-received-at]').forEach(element => {
+    setTextIfChanged(element, formatAge(ageSeconds(element.dataset.marketReceivedAt)));
+  });
 }
 
 function renderSymbols(rows) {
@@ -867,6 +879,7 @@ function populateLiveSymbolSelectors() {
 function receiveSnapshot(snapshot) {
   if (!snapshot?.terminal?.id) return;
   snapshots[snapshot.terminal.id] = snapshot;
+  renderDashboardMarket();
   const selected = document.getElementById('snapshotTerminal').value;
   if (!selected || selected === snapshot.terminal.id) renderSnapshot(snapshot);
 }
@@ -929,6 +942,7 @@ function applyLiveStreams(payload) {
   populateLiveTerminalSelectors();
   for (let i = 1; i <= 3; i++) renderLiveSlot(i);
   updateLiveProof();
+  renderDashboardMarket();
 }
 
 function receiveLiveTick(tick) {
@@ -947,6 +961,7 @@ function receiveLiveTick(tick) {
     }
   }
   updateLiveProof();
+  renderDashboardMarket();
 }
 
 function liveSlotActionState(row, terminalId, symbolId) {
@@ -1160,6 +1175,7 @@ async function loadSnapshots() {
   if (!res.ok) return;
   snapshots = res.data || {};
   renderSelectedSnapshot();
+  renderDashboardMarket();
 }
 
 async function loadLiveStreams() {
@@ -1789,6 +1805,7 @@ window.addEventListener('DOMContentLoaded', () => {
   setInterval(() => {
     for (let i = 1; i <= 3; i++) renderLiveSlot(i);
     updateLiveProof();
+    refreshDashboardMarketAges();
   }, 1000);
 
   new QWebChannel(qt.webChannelTransport, channel => {

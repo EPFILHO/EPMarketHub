@@ -12,7 +12,7 @@
     ]),
     dashboard: Object.freeze([
       'Dashboard',
-      'Visão geral das instâncias, processos MT5 e leituras conectadas.',
+      'Dados de mercado recebidos das suas fontes MT5.',
     ]),
     diagnostics: Object.freeze([
       'Diagnóstico',
@@ -149,6 +149,72 @@
     };
   }
 
+  function marketQuoteRows(snapshotMap = {}, liveTickMap = {}) {
+    const quotesBySource = new Map();
+
+    function marketNumber(value) {
+      if (value === null || value === undefined || value === '') return null;
+      const number = Number(value);
+      return Number.isFinite(number) ? number : null;
+    }
+
+    function addQuote(tick, terminal = {}, fallbackTimestamp = '') {
+      if (!tick || tick.ok === false) return;
+      const bid = marketNumber(tick.bid);
+      const ask = marketNumber(tick.ask);
+      if (bid === null && ask === null) return;
+
+      const terminalId = String(tick.terminal_id || terminal.id || '');
+      const logicalId = String(
+        tick.logical_id || tick.name || tick.resolved_symbol || tick.symbol || '',
+      );
+      if (!terminalId || !logicalId) return;
+
+      const receivedAt = String(tick.received_at || fallbackTimestamp || '');
+      const receivedScore = Date.parse(receivedAt);
+      const quote = {
+        terminalId,
+        logicalId,
+        name: String(tick.name || tick.logical_id || tick.resolved_symbol || tick.symbol || ''),
+        symbol: String(tick.resolved_symbol || tick.symbol || ''),
+        bid,
+        ask,
+        spread: marketNumber(tick.spread),
+        terminalLabel: String(tick.terminal_label || terminal.label || terminalId),
+        brokerName: String(tick.broker_name || terminal.broker_name || ''),
+        receivedAt,
+        receivedScore: Number.isFinite(receivedScore) ? receivedScore : 0,
+      };
+      const key = `${terminalId}\u0000${logicalId}`;
+      const current = quotesBySource.get(key);
+      if (!current || quote.receivedScore >= current.receivedScore) {
+        quotesBySource.set(key, quote);
+      }
+    }
+
+    Object.values(snapshotMap || {}).forEach(snapshot => {
+      const terminal = snapshot?.terminal || {};
+      (snapshot?.ticks || []).forEach(tick => addQuote(tick, terminal, snapshot?.timestamp));
+    });
+    Object.values(liveTickMap || {}).forEach(tick => addQuote(tick));
+
+    return Array.from(quotesBySource.values()).sort((a, b) => (
+      b.receivedScore - a.receivedScore
+      || a.name.localeCompare(b.name, 'pt-BR', { sensitivity: 'base', numeric: true })
+      || a.terminalLabel.localeCompare(b.terminalLabel, 'pt-BR', { sensitivity: 'base', numeric: true })
+    ));
+  }
+
+  function marketQuoteSummary(snapshotMap = {}, liveTickMap = {}) {
+    const quotes = marketQuoteRows(snapshotMap, liveTickMap);
+    return {
+      quotes,
+      assets: new Set(quotes.map(quote => quote.logicalId)).size,
+      sources: new Set(quotes.map(quote => quote.terminalId)).size,
+      lastUpdated: quotes[0]?.receivedAt || '',
+    };
+  }
+
   function switchView(documentRef, view) {
     const metadata = VIEW_METADATA[view];
     if (!documentRef || !metadata) return false;
@@ -175,6 +241,8 @@
     bindThemeToggle,
     compareTerminal,
     initializeTheme,
+    marketQuoteRows,
+    marketQuoteSummary,
     normalizeTheme,
     numberTerminals,
     setTheme,

@@ -76,12 +76,12 @@ Use a instalação sincronizada com os mesmos cadastros da validação do kernel
 2. Alterne para o tema escuro, navegue por todas as telas, feche e abra novamente o aplicativo e confirme que a preferência foi preservada.
 3. Volte ao tema claro e confirme que Dashboard, Terminais MT5, Ativos, Diagnóstico, seletores, modais e toasts permanecem legíveis; estados não podem depender somente de cor.
 4. Confirme a navegação na ordem **Dashboard**, **Terminais MT5**, **Ativos** e **Diagnóstico**, com título, subtítulo e indicação visual da tela ativa coerentes.
-5. No Dashboard, compare **Terminais cadastrados**, **MT5 abertos**, **Leituras conectadas** e **Requer atenção** com os cards reais em **Terminais MT5**.
-6. Confirme que o Dashboard não mostra força, tendência, notícias, cotações ou qualquer dado analítico ainda inexistente; os módulos futuros devem aparecer apenas como **Em breve**.
-7. Provoque apenas estados reais seguros, como MT5 fechado, aguardando login e corretora desconectada, e confirme que o resumo de atenção e os badges dos terminais concordam.
-8. Cadastre ou edite apelidos descartáveis para mudar a ordem alfabética e confirme a renumeração `01`, `02`, `03` nos cards, no Dashboard e nos seletores, sem alterar o ID ou a pasta da instância.
+5. Sem snapshots ou fluxos recebidos, confirme que o Dashboard mostra estado vazio e não inventa preços. Com leitura ativa, compare Ativo, Símbolo, Bid, Ask, Spread, Fonte e idade com o snapshot e os fluxos em **Diagnóstico**.
+6. Confirme que **Ativos cotados**, **Cotações disponíveis**, **Fontes com dados** e **Último dado** são derivados do conteúdo exibido. O Dashboard não deve mostrar força, tendência, notícias ou qualquer análise ainda inexistente; os módulos futuros continuam apenas como **Em breve**.
+7. Provoque apenas estados reais seguros, como MT5 fechado, aguardando login e corretora desconectada, e confirme que o resumo secundário **Fontes de dados** e os badges em **Terminais MT5** concordam.
+8. Cadastre ou edite apelidos descartáveis para mudar a ordem alfabética e confirme a renumeração `01`, `02`, `03` nos cards, nas fontes de cotação do Dashboard e nos seletores, sem alterar o ID ou a pasta da instância.
 9. Exclua um cadastro descartável pelo fluxo normal e confirme que os números seguintes são compactados, sem lacunas.
-10. Em **Diagnóstico**, configure os três fluxos simultâneos e o snapshot como na baseline; confirme que PIDs, leituras, ticks, seletores e ações continuam funcionando.
+10. Em **Diagnóstico**, configure os três fluxos simultâneos e o snapshot como na baseline; confirme que PIDs, leituras, ticks, seletores e ações continuam funcionando e que o banner de simultaneidade não desloca os cards quando o texto muda.
 11. Redimensione a janela nos dois temas e confirme que sidebar, métricas, cards, badges e botões não se sobrepõem nem desaparecem.
 12. Navegue com `Tab` e confirme foco visível em links, botões, campos e seletor de tema; pressione `Esc` nos modais e seletores e confirme o comportamento preservado.
 13. Repita fechamento individual, em lote e pelo X da aplicação e confirme a mesma responsividade e o mesmo isolamento validados na 0.4.11.

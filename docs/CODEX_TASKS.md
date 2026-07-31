@@ -8,7 +8,7 @@ Validar manualmente a fundação visual 0.4.12 no runtime real do Windows, prese
 
 1. Executar todas as verificações automatizadas no clone e na instalação sincronizada.
 2. Executar a seção **Fundação visual 0.4.12** de `docs/MANUAL_TESTS.md` nos temas claro e escuro.
-3. Confirmar que o Dashboard apresenta somente contagens e diagnósticos reais.
+3. Confirmar que o Dashboard apresenta somente cotações realmente recebidas, com fonte e idade coerentes com o Diagnóstico; sem dados, deve permanecer em estado vazio.
 4. Confirmar renumeração após cadastro, edição e exclusão de uma instância descartável.
 5. Repetir os fluxos de Diagnóstico e os encerramentos responsivos com MT5 reais.
 6. Registrar divergências visuais ou funcionais sem alterar o kernel como efeito colateral.
@@ -24,6 +24,6 @@ Validar manualmente a fundação visual 0.4.12 no runtime real do Windows, prese
 ## Entrega esperada
 
 - Tema claro e escuro aprovados no QWebEngine real.
-- Dashboard, navegação, Diagnóstico e numeração coerentes com o estado observado.
+- Dashboard orientado a mercado, fontes secundárias, navegação, Diagnóstico e numeração coerentes com o estado observado.
 - Confirmação de que a evolução visual não regrediu conexão, leitura nem shutdown.
 - Decisão explícita do proprietário antes de publicação.

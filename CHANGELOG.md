@@ -152,11 +152,13 @@
 - Tema claro como padrão e tema escuro opcional, com preferência persistida localmente sem depender da bridge.
 - Paleta convertida em tokens semânticos para superfícies, campos, modais, seletores, badges e estados nos dois temas.
 - Navegação reorganizada entre Dashboard, Terminais MT5, Ativos e Diagnóstico, com ícones internos e indicação acessível da tela ativa.
-- Dashboard substitui a antiga bancada técnica por um resumo real de cadastros, processos MT5, leituras conectadas e diagnósticos que exigem atenção.
+- Dashboard substitui a antiga bancada técnica por uma visão de mercado baseada somente nas cotações reais já recebidas por snapshots e fluxos ao vivo; não há preços, tendências ou indicadores simulados.
+- Saúde da ponte, leituras conectadas, MT5 abertos e condições que exigem atenção permanecem visíveis em um resumo secundário de fontes de dados.
 - Os três fluxos simultâneos, seus PIDs, ticks e o snapshot consolidado permanecem intactos na nova área **Diagnóstico**.
 - Numeração visual `01`, `02`, `03` derivada da ordem alfabética e recalculada após qualquer novo payload de cadastro, sem persistência nem mudança de identidade.
-- Números reaproveitados nos cards, no Dashboard, nos resumos conectados e nos seletores de Diagnóstico.
-- Navegação, tema, ordenação, numeração e resumo de saúde extraídos para `web/ui_foundation.js`.
+- Números reaproveitados nos cards, nas fontes de cotação do Dashboard, nos resumos conectados e nos seletores de Diagnóstico.
+- Navegação, tema, ordenação, numeração e consolidação pura das cotações extraídos para `web/ui_foundation.js`.
 - Rótulos, badges e regras puras de habilitação dos cards extraídos para `web/terminal_presentation.js`, preservando a API consumida por `app.js`.
 - Foco visível, regiões de status e estados de atenção aprimorados sem alterar ações, slots ou tempos do kernel.
+- Banner de simultaneidade mantém altura estável entre suas mensagens e resume ocorrências extensas; os detalhes continuam nos painéis de cada fluxo.
 - Nenhum worker, protocolo, polling, fila, temporização, limite, executável ou dado de runtime foi alterado.

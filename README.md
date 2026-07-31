@@ -2,7 +2,7 @@
 
 Aplicativo desktop local para organizar instâncias controladas do MetaTrader 5 e ler dados de mercado por meio da biblioteca Python `MetaTrader5`.
 
-Esta versão está em desenvolvimento sobre a baseline funcional `v0.4.11-baseline`. O kernel, o protocolo worker/bridge, o polling, as temporizações e o limite simultâneo permanecem congelados; a 0.4.12 organiza a interface, introduz temas claro e escuro, separa o painel de saúde das ferramentas de diagnóstico e adiciona numeração visual derivada aos terminais.
+Esta versão está em desenvolvimento sobre a baseline funcional `v0.4.11-baseline`. O kernel, o protocolo worker/bridge, o polling, as temporizações e o limite simultâneo permanecem congelados; a 0.4.12 organiza a interface, introduz temas claro e escuro, coloca os dados de mercado no primeiro plano, separa a saúde das fontes das ferramentas de diagnóstico e adiciona numeração visual derivada aos terminais.
 
 A baseline 0.4.9, o kernel 0.4.10 e a GUI responsiva 0.4.11 foram validados manualmente no Windows com instâncias MT5 reais e conexões simultâneas. A 0.4.11 foi publicada e congelada no commit `2fc4bec`.
 
@@ -17,7 +17,7 @@ Funciona hoje:
 - Limite simultâneo definido somente pela política interna `MAX_ACTIVE_TERMINALS` (atualmente `3`); não é uma preferência do usuário e os cadastros continuam ilimitados.
 - Seleção explícita dos terminais que serão abertos.
 - Edição e exclusão de cadastros pela interface.
-- Dashboard de saúde com todos os terminais cadastrados, contagens e diagnósticos derivados somente do estado real das instâncias.
+- Dashboard orientado a mercado, consolidando as cotações reais já recebidas por snapshots e fluxos ao vivo, com a saúde das fontes em posição secundária.
 - Temas claro e escuro, com preferência local persistida e tema claro como padrão.
 - Navegação separada entre Dashboard, Terminais MT5, Ativos e Diagnóstico.
 - Numeração visual dos terminais recalculada pela ordem alfabética, sem persistência.

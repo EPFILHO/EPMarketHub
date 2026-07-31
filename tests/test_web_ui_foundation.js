@@ -84,7 +84,7 @@ assert.equal(navItems[1].classList.contains('active'), false);
 assert.equal(navItems[0].attributes['aria-current'], 'page');
 assert.equal(views[0].classList.contains('active'), true);
 assert.equal(title.textContent, 'Dashboard');
-assert.match(subtitle.textContent, /processos MT5/);
+assert.match(subtitle.textContent, /Dados de mercado/);
 assert.equal(ui.switchView(documentRef, 'diagnostics'), true);
 assert.equal(navItems[3].classList.contains('active'), true);
 assert.equal(navItems[0].attributes['aria-current'], undefined);
@@ -153,11 +153,52 @@ assert.equal(
   false,
 );
 
+const market = ui.marketQuoteSummary({
+  one: {
+    timestamp: '2026-07-31T10:00:01.000Z',
+    terminal: { id: 'one', label: 'Fonte One', broker_name: 'Broker One' },
+    ticks: [
+      { logical_id: 'eurusd', name: 'Euro/Dólar', symbol: 'EURUSD', bid: 1.1, ask: 1.2, spread: 0.1 },
+      { logical_id: 'bitcoin', name: 'Bitcoin', symbol: 'BTCUSD', bid: 100, ask: 101, spread: 1 },
+      { logical_id: 'invalid', name: 'Inválido', symbol: 'INVALID', bid: null, ask: null },
+    ],
+  },
+  two: {
+    timestamp: '2026-07-31T10:00:02.000Z',
+    terminal: { id: 'two', label: 'Fonte Two', broker_name: 'Broker Two' },
+    ticks: [
+      { logical_id: 'eurusd', name: 'Euro/Dólar', symbol: 'EURUSD.r', bid: 1.3, ask: 1.4, spread: 0.1 },
+    ],
+  },
+}, {
+  'live-1': {
+    terminal_id: 'one',
+    terminal_label: 'Fonte One',
+    broker_name: 'Broker One',
+    logical_id: 'eurusd',
+    name: 'Euro/Dólar',
+    resolved_symbol: 'EURUSD',
+    bid: 1.15,
+    ask: 1.25,
+    spread: 0.1,
+    received_at: '2026-07-31T10:00:03.000Z',
+  },
+});
+assert.equal(market.assets, 2);
+assert.equal(market.sources, 2);
+assert.equal(market.quotes.length, 3);
+assert.equal(market.lastUpdated, '2026-07-31T10:00:03.000Z');
+assert.equal(market.quotes[0].bid, 1.15);
+assert.equal(market.quotes.filter(quote => quote.logicalId === 'eurusd').length, 2);
+
 assert.match(html, /data-view="dashboard"[^>]*aria-current="page"/);
 assert.match(html, /data-view="diagnostics"/);
 const dashboardMarkup = html.split('id="view-dashboard"')[1].split('id="view-terminals"')[0];
 const diagnosticsMarkup = html.split('id="view-diagnostics"')[1];
-assert.match(dashboardMarkup, /id="dashboardTerminalHealth"/);
+assert.match(dashboardMarkup, /id="dashboardMarketQuotes"/);
+assert.match(dashboardMarkup, /id="marketQuotedAssets"/);
+assert.match(dashboardMarkup, /id="dashboardSourcesCard"/);
+assert.doesNotMatch(dashboardMarkup, /id="dashboardTerminalHealth"/);
 assert.doesNotMatch(dashboardMarkup, /id="liveProof"/);
 assert.match(diagnosticsMarkup, /id="workerSummary"/);
 assert.match(diagnosticsMarkup, /id="liveProof"/);
