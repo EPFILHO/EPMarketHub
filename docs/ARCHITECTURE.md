@@ -67,7 +67,7 @@ Eventos carregam a identidade do processo. O supervisor descarta mensagens resid
 
 O frontend recebe o estado por métodos expostos no QWebChannel. `web/app.js` continua responsável pela integração com a bridge e pelos fluxos interativos; tema, navegação, ordenação, numeração, resumo de saúde e consolidação pura de cotações vivem em `ui_foundation.js`, enquanto rótulos, badges e regras puras de ações dos cards vivem em `terminal_presentation.js`. Esses módulos não acessam Qt, processos, filas nem a biblioteca MT5.
 
-O Dashboard apresenta primeiro os dados de mercado já existentes nos caches de snapshots e fluxos ao vivo. A consolidação usa a chave `terminal + ativo lógico`, mantém o pacote mais recente de cada fonte e expõe sua idade sem fabricar cotações. A saúde das fontes permanece em um resumo secundário. Os três fluxos simultâneos e o snapshot consolidado continuam disponíveis na área **Diagnóstico**, sem alteração de handlers ou protocolo.
+O Dashboard apresenta primeiro os dados de mercado já existentes nos caches de snapshots e fluxos ao vivo, filtrados pelos terminais cujo worker está atualmente `connected`. A consolidação usa a chave `terminal + ativo lógico`, mantém o pacote mais recente de cada fonte conectada e expõe sua idade sem fabricar cotações. O cache de uma fonte parada continua disponível para o Diagnóstico, mas deixa imediatamente as métricas e a tabela de mercado. A saúde das fontes permanece em um resumo secundário. Os três fluxos simultâneos e o snapshot consolidado continuam disponíveis na área **Diagnóstico**, sem alteração de handlers ou protocolo.
 
 O estado de um cadastro não é reduzido a um único rótulo. `terminal_states.py`
 mantém separadas a integridade da instância, a existência/transição do processo

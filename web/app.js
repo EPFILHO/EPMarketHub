@@ -8,6 +8,7 @@ let liveTicks = {};
 let runtimeLimits = { max_active_mt5: null, registered: 0, open_mt5: 0, active_workers: 0 };
 let workerSummarySignature = '';
 let dashboardTerminalSignature = '';
+let dashboardMarketSourceSignature = null;
 const SELECTED_TERMINALS_KEY = 'ep_market_hub_selected_terminals_v1';
 let selectedTerminalIds = new Set();
 let bulkOpenInProgress = false;
@@ -483,6 +484,7 @@ function renderTerminals(rows) {
     updateWorkersStatus();
     renderWorkerSummary();
     renderDashboardHealth();
+    renderDashboardMarket();
     applyLifecycleBusyState();
     return;
   }
@@ -553,6 +555,7 @@ function renderTerminals(rows) {
   updateWorkersStatus();
   renderWorkerSummary();
   renderDashboardHealth();
+  renderDashboardMarket();
   renderSelectedSnapshot();
   applyLifecycleBusyState();
   updateLiveProof();
@@ -737,10 +740,26 @@ function renderDashboardHealth() {
         ? 'Há uma condição operacional explícita. Consulte Terminais MT5 para ver a causa real.'
         : 'A infraestrutura de coleta não apresenta pendências confirmadas.'),
   );
+
+  const sourceSignature = connectedMarketSourceIds().sort().join('|');
+  if (dashboardMarketSourceSignature !== sourceSignature) {
+    dashboardMarketSourceSignature = sourceSignature;
+    renderDashboardMarket();
+  }
+}
+
+function connectedMarketSourceIds() {
+  return terminals
+    .filter(terminal => Boolean((workerStates[terminal.id] || terminal.worker || {}).connected))
+    .map(terminal => String(terminal.id));
 }
 
 function renderDashboardMarket() {
-  const summary = MarketHubUI.marketQuoteSummary(snapshots, liveTicks);
+  const summary = MarketHubUI.marketQuoteSummary(
+    snapshots,
+    liveTicks,
+    connectedMarketSourceIds(),
+  );
   setTextIfChanged(document.getElementById('marketQuotedAssets'), summary.assets);
   setTextIfChanged(document.getElementById('marketQuoteCount'), summary.quotes.length);
   setTextIfChanged(document.getElementById('marketDataSources'), summary.sources);
@@ -780,7 +799,11 @@ function renderDashboardMarket() {
 }
 
 function refreshDashboardMarketAges() {
-  const summary = MarketHubUI.marketQuoteSummary(snapshots, liveTicks);
+  const summary = MarketHubUI.marketQuoteSummary(
+    snapshots,
+    liveTicks,
+    connectedMarketSourceIds(),
+  );
   setTextIfChanged(
     document.getElementById('marketLastUpdate'),
     summary.lastUpdated ? formatAge(ageSeconds(summary.lastUpdated)) : '—',

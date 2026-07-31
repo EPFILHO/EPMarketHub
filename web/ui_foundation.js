@@ -149,8 +149,11 @@
     };
   }
 
-  function marketQuoteRows(snapshotMap = {}, liveTickMap = {}) {
+  function marketQuoteRows(snapshotMap = {}, liveTickMap = {}, activeTerminalIds = null) {
     const quotesBySource = new Map();
+    const activeSources = Array.isArray(activeTerminalIds)
+      ? new Set(activeTerminalIds.map(String))
+      : null;
 
     function marketNumber(value) {
       if (value === null || value === undefined || value === '') return null;
@@ -169,6 +172,7 @@
         tick.logical_id || tick.name || tick.resolved_symbol || tick.symbol || '',
       );
       if (!terminalId || !logicalId) return;
+      if (activeSources && !activeSources.has(terminalId)) return;
 
       const receivedAt = String(tick.received_at || fallbackTimestamp || '');
       const receivedScore = Date.parse(receivedAt);
@@ -205,8 +209,8 @@
     ));
   }
 
-  function marketQuoteSummary(snapshotMap = {}, liveTickMap = {}) {
-    const quotes = marketQuoteRows(snapshotMap, liveTickMap);
+  function marketQuoteSummary(snapshotMap = {}, liveTickMap = {}, activeTerminalIds = null) {
+    const quotes = marketQuoteRows(snapshotMap, liveTickMap, activeTerminalIds);
     return {
       quotes,
       assets: new Set(quotes.map(quote => quote.logicalId)).size,

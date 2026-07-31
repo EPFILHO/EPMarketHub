@@ -153,7 +153,7 @@ assert.equal(
   false,
 );
 
-const market = ui.marketQuoteSummary({
+const marketSnapshots = {
   one: {
     timestamp: '2026-07-31T10:00:01.000Z',
     terminal: { id: 'one', label: 'Fonte One', broker_name: 'Broker One' },
@@ -170,7 +170,8 @@ const market = ui.marketQuoteSummary({
       { logical_id: 'eurusd', name: 'Euro/Dólar', symbol: 'EURUSD.r', bid: 1.3, ask: 1.4, spread: 0.1 },
     ],
   },
-}, {
+};
+const marketLiveTicks = {
   'live-1': {
     terminal_id: 'one',
     terminal_label: 'Fonte One',
@@ -183,13 +184,20 @@ const market = ui.marketQuoteSummary({
     spread: 0.1,
     received_at: '2026-07-31T10:00:03.000Z',
   },
-});
+};
+const market = ui.marketQuoteSummary(marketSnapshots, marketLiveTicks);
 assert.equal(market.assets, 2);
 assert.equal(market.sources, 2);
 assert.equal(market.quotes.length, 3);
 assert.equal(market.lastUpdated, '2026-07-31T10:00:03.000Z');
 assert.equal(market.quotes[0].bid, 1.15);
 assert.equal(market.quotes.filter(quote => quote.logicalId === 'eurusd').length, 2);
+const activeMarket = ui.marketQuoteSummary(marketSnapshots, marketLiveTicks, ['two']);
+assert.equal(activeMarket.assets, 1);
+assert.equal(activeMarket.sources, 1);
+assert.equal(activeMarket.quotes.length, 1);
+assert.equal(activeMarket.quotes[0].terminalId, 'two');
+assert.equal(ui.marketQuoteSummary(marketSnapshots, marketLiveTicks, []).quotes.length, 0);
 
 assert.match(html, /data-view="dashboard"[^>]*aria-current="page"/);
 assert.match(html, /data-view="diagnostics"/);

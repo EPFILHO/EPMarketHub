@@ -17,7 +17,7 @@ Funciona hoje:
 - Limite simultâneo definido somente pela política interna `MAX_ACTIVE_TERMINALS` (atualmente `3`); não é uma preferência do usuário e os cadastros continuam ilimitados.
 - Seleção explícita dos terminais que serão abertos.
 - Edição e exclusão de cadastros pela interface.
-- Dashboard orientado a mercado, consolidando as cotações reais já recebidas por snapshots e fluxos ao vivo, com a saúde das fontes em posição secundária.
+- Dashboard orientado a mercado, consolidando as cotações reais das fontes atualmente conectadas; caches de fontes paradas permanecem apenas no Diagnóstico e a saúde da coleta fica em posição secundária.
 - Temas claro e escuro, com preferência local persistida e tema claro como padrão.
 - Navegação separada entre Dashboard, Terminais MT5, Ativos e Diagnóstico.
 - Numeração visual dos terminais recalculada pela ordem alfabética, sem persistência.

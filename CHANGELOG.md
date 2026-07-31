@@ -152,7 +152,7 @@
 - Tema claro como padrão e tema escuro opcional, com preferência persistida localmente sem depender da bridge.
 - Paleta convertida em tokens semânticos para superfícies, campos, modais, seletores, badges e estados nos dois temas.
 - Navegação reorganizada entre Dashboard, Terminais MT5, Ativos e Diagnóstico, com ícones internos e indicação acessível da tela ativa.
-- Dashboard substitui a antiga bancada técnica por uma visão de mercado baseada somente nas cotações reais já recebidas por snapshots e fluxos ao vivo; não há preços, tendências ou indicadores simulados.
+- Dashboard substitui a antiga bancada técnica por uma visão de mercado baseada somente nas cotações reais das fontes conectadas; caches de fontes paradas não são contados nem exibidos como mercado atual e não há preços, tendências ou indicadores simulados.
 - Saúde da ponte, leituras conectadas, MT5 abertos e condições que exigem atenção permanecem visíveis em um resumo secundário de fontes de dados.
 - Os três fluxos simultâneos, seus PIDs, ticks e o snapshot consolidado permanecem intactos na nova área **Diagnóstico**.
 - Numeração visual `01`, `02`, `03` derivada da ordem alfabética e recalculada após qualquer novo payload de cadastro, sem persistência nem mudança de identidade.
