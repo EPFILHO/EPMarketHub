@@ -4,6 +4,7 @@ const path = require('node:path');
 const vm = require('node:vm');
 
 const uiSource = fs.readFileSync(path.join(__dirname, '..', 'web', 'ui_foundation.js'), 'utf8');
+const presentationSource = fs.readFileSync(path.join(__dirname, '..', 'web', 'terminal_presentation.js'), 'utf8');
 const source = fs.readFileSync(path.join(__dirname, '..', 'web', 'app.js'), 'utf8');
 const context = {
   window: { addEventListener() {} },
@@ -16,6 +17,7 @@ const context = {
 };
 vm.createContext(context);
 vm.runInContext(uiSource, context);
+vm.runInContext(presentationSource, context);
 vm.runInContext(source, context);
 
 function plain(value) {
