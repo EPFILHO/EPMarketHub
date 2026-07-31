@@ -3,6 +3,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 
+const uiSource = fs.readFileSync(path.join(__dirname, '..', 'web', 'ui_foundation.js'), 'utf8');
 const source = fs.readFileSync(path.join(__dirname, '..', 'web', 'app.js'), 'utf8');
 const context = {
   window: { addEventListener() {} },
@@ -14,6 +15,7 @@ const context = {
   clearTimeout,
 };
 vm.createContext(context);
+vm.runInContext(uiSource, context);
 vm.runInContext(source, context);
 
 function plain(value) {

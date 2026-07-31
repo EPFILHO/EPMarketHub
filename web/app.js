@@ -256,15 +256,7 @@ function setBridgeStatus(ok, text) {
 }
 
 function switchView(view) {
-  document.querySelectorAll('.nav-item').forEach(btn => btn.classList.toggle('active', btn.dataset.view === view));
-  document.querySelectorAll('.view').forEach(v => v.classList.toggle('active', v.id === `view-${view}`));
-  const titles = {
-    terminals: ['Terminais MT5', 'Crie instâncias controladas e mantenha múltiplas conexões simultâneas.'],
-    symbols: ['Ativos', 'Ativos lógicos e aliases são resolvidos de forma independente em cada MT5.'],
-    dashboard: ['Dashboard', 'Fluxos rápidos e snapshots consolidados vindos de workers persistentes.']
-  };
-  document.getElementById('viewTitle').textContent = titles[view][0];
-  document.getElementById('viewSubtitle').textContent = titles[view][1];
+  return MarketHubUI.switchView(document, view);
 }
 
 
@@ -281,11 +273,7 @@ function setHtmlIfChanged(element, value) {
 }
 
 function compareTerminal(a, b) {
-  const labelCompare = String(a?.label || '').localeCompare(String(b?.label || ''), 'pt-BR', { sensitivity: 'base', numeric: true });
-  if (labelCompare) return labelCompare;
-  const brokerCompare = String(a?.broker_name || '').localeCompare(String(b?.broker_name || ''), 'pt-BR', { sensitivity: 'base', numeric: true });
-  if (brokerCompare) return brokerCompare;
-  return String(a?.account_login || '').localeCompare(String(b?.account_login || ''), 'pt-BR', { sensitivity: 'base', numeric: true });
+  return MarketHubUI.compareTerminal(a, b);
 }
 
 function connectedTerminals() {
