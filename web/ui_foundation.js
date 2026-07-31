@@ -15,6 +15,63 @@
       'Fluxos rápidos e snapshots consolidados vindos de workers persistentes.',
     ]),
   });
+  const THEME_STORAGE_KEY = 'ep_market_hub_theme_v1';
+
+  function normalizeTheme(theme) {
+    return theme === 'dark' ? 'dark' : 'light';
+  }
+
+  function storedTheme(storage) {
+    try {
+      const value = storage?.getItem(THEME_STORAGE_KEY);
+      return value === 'light' || value === 'dark' ? value : null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  function applyTheme(documentRef, theme) {
+    const normalized = normalizeTheme(theme);
+    if (!documentRef?.documentElement) return normalized;
+    documentRef.documentElement.dataset.theme = normalized;
+    const button = documentRef.getElementById?.('themeToggle');
+    if (button) {
+      const nextTheme = normalized === 'light' ? 'dark' : 'light';
+      button.setAttribute('aria-pressed', normalized === 'dark' ? 'true' : 'false');
+      button.title = `Usar tema ${nextTheme === 'dark' ? 'escuro' : 'claro'}`;
+      const icon = button.querySelector?.('[data-theme-icon]');
+      const label = button.querySelector?.('[data-theme-label]');
+      if (icon) icon.textContent = nextTheme === 'dark' ? '☾' : '☀';
+      if (label) label.textContent = nextTheme === 'dark' ? 'Tema escuro' : 'Tema claro';
+    }
+    return normalized;
+  }
+
+  function initializeTheme(documentRef, storage) {
+    return applyTheme(documentRef, storedTheme(storage) || 'light');
+  }
+
+  function setTheme(documentRef, storage, theme) {
+    const normalized = applyTheme(documentRef, theme);
+    try {
+      storage?.setItem(THEME_STORAGE_KEY, normalized);
+    } catch (_) {
+      // A aparência continua funcional mesmo sem armazenamento local.
+    }
+    return normalized;
+  }
+
+  function bindThemeToggle(documentRef, storage) {
+    const button = documentRef?.getElementById?.('themeToggle');
+    const current = initializeTheme(documentRef, storage);
+    if (!button || button.dataset.themeBound === '1') return current;
+    button.dataset.themeBound = '1';
+    button.addEventListener('click', () => {
+      const active = normalizeTheme(documentRef.documentElement.dataset.theme);
+      setTheme(documentRef, storage, active === 'light' ? 'dark' : 'light');
+    });
+    return current;
+  }
 
   function compareTerminal(a, b) {
     const labelCompare = String(a?.label || '').localeCompare(
@@ -53,8 +110,15 @@
   }
 
   root.MarketHubUI = Object.freeze({
+    THEME_STORAGE_KEY,
     VIEW_METADATA,
+    applyTheme,
+    bindThemeToggle,
     compareTerminal,
+    initializeTheme,
+    normalizeTheme,
+    setTheme,
+    storedTheme,
     switchView,
   });
 }(typeof globalThis !== 'undefined' ? globalThis : this));

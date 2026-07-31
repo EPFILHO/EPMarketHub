@@ -1730,6 +1730,7 @@ function formatAge(seconds) {
 }
 
 window.addEventListener('DOMContentLoaded', () => {
+  MarketHubUI.bindThemeToggle(document, window.localStorage);
   restoreSelectedTerminals();
   enhanceAllSelects();
   document.addEventListener('click', () => closeEnhancedSelects());

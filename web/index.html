@@ -1,9 +1,14 @@
 <!doctype html>
-<html lang="pt-BR">
+<html lang="pt-BR" data-theme="light">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>EP Market Hub</title>
+  <script src="ui_foundation.js"></script>
+  <script>
+    try { MarketHubUI.initializeTheme(document, window.localStorage); }
+    catch (_) { MarketHubUI.initializeTheme(document, null); }
+  </script>
   <link rel="stylesheet" href="style.css" />
   <script src="qrc:///qtwebchannel/qwebchannel.js"></script>
 </head>
@@ -47,6 +52,10 @@
           <p id="viewSubtitle">Crie instâncias controladas e mantenha múltiplas conexões simultâneas.</p>
         </div>
         <div class="status-group">
+          <button type="button" class="theme-toggle" id="themeToggle" aria-pressed="false" title="Usar tema escuro">
+            <span class="theme-toggle-icon" data-theme-icon aria-hidden="true">☾</span>
+            <span data-theme-label>Tema escuro</span>
+          </button>
           <div class="status-pill" id="workersStatus">Leituras: 0 ativas</div>
           <div class="status-pill" id="bridgeStatus">Conectando à ponte Python...</div>
         </div>
@@ -269,7 +278,6 @@
   </div>
 
   <div id="toast" class="toast hidden"></div>
-  <script src="ui_foundation.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

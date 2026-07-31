@@ -63,4 +63,43 @@ assert.equal(title.textContent, 'Dashboard');
 assert.match(subtitle.textContent, /snapshots consolidados/);
 assert.equal(ui.switchView(documentRef, 'unknown'), false);
 
+const themeIcon = { textContent: '' };
+const themeLabel = { textContent: '' };
+const themeButton = {
+  dataset: {},
+  attributes: {},
+  listeners: {},
+  title: '',
+  setAttribute(name, value) { this.attributes[name] = value; },
+  querySelector(selector) {
+    if (selector === '[data-theme-icon]') return themeIcon;
+    if (selector === '[data-theme-label]') return themeLabel;
+    return null;
+  },
+  addEventListener(name, listener) { this.listeners[name] = listener; },
+};
+const themeDocument = {
+  documentElement: { dataset: {} },
+  getElementById(id) { return id === 'themeToggle' ? themeButton : null; },
+};
+const storedValues = new Map();
+const storage = {
+  getItem(key) { return storedValues.get(key) || null; },
+  setItem(key, value) { storedValues.set(key, value); },
+};
+
+assert.equal(ui.initializeTheme(themeDocument, storage), 'light');
+assert.equal(themeDocument.documentElement.dataset.theme, 'light');
+assert.equal(themeButton.attributes['aria-pressed'], 'false');
+assert.equal(themeLabel.textContent, 'Tema escuro');
+ui.bindThemeToggle(themeDocument, storage);
+themeButton.listeners.click();
+assert.equal(themeDocument.documentElement.dataset.theme, 'dark');
+assert.equal(storage.getItem(ui.THEME_STORAGE_KEY), 'dark');
+assert.equal(themeButton.attributes['aria-pressed'], 'true');
+assert.equal(themeIcon.textContent, '☀');
+assert.equal(themeLabel.textContent, 'Tema claro');
+assert.equal(ui.initializeTheme(themeDocument, storage), 'dark');
+assert.equal(ui.normalizeTheme('invalid'), 'light');
+
 console.log('web UI foundation tests passed');
