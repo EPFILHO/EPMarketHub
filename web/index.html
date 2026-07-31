@@ -19,37 +19,48 @@
         <div class="brand-mark">EP</div>
         <div>
           <h1>Market Hub</h1>
-          <p>Kernel 0.4.11</p>
+          <p>Versão 0.4.12</p>
         </div>
       </div>
 
-      <nav>
-        <button class="nav-item active" data-view="terminals">Terminais MT5</button>
-        <button class="nav-item" data-view="symbols">Ativos</button>
-        <button class="nav-item" data-view="dashboard">Dashboard</button>
+      <nav class="primary-nav" aria-label="Navegação principal">
+        <button class="nav-item active" data-view="dashboard" aria-current="page">
+          <svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4zM14 14h6v6h-6z"/></svg>
+          <span>Dashboard</span>
+        </button>
+        <button class="nav-item" data-view="terminals">
+          <svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v11H4zM8 20h8M12 16v4"/></svg>
+          <span>Terminais MT5</span>
+        </button>
+        <button class="nav-item" data-view="symbols">
+          <svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8"/><path d="M8 12h8M12 8v8"/></svg>
+          <span>Ativos</span>
+        </button>
+        <button class="nav-item" data-view="diagnostics">
+          <svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 18V9M10 18V5M16 18v-7M22 18V7"/></svg>
+          <span>Diagnóstico</span>
+        </button>
       </nav>
 
-      <div class="notice">
-        <strong>Conexões isoladas.</strong>
-        <span>Cada MT5 permanece conectado em um processo Python próprio. O app não alterna a conexão entre terminais.</span>
+      <div class="future-nav" aria-label="Módulos futuros">
+        <span class="future-nav-title">Próximos módulos</span>
+        <div class="future-nav-item"><span>Notícias</span><small>Em breve</small></div>
+        <div class="future-nav-item"><span>Calendário</span><small>Em breve</small></div>
+        <div class="future-nav-item"><span>Leitura com IA</span><small>Em breve</small></div>
       </div>
 
-      <div class="notice neutral">
-        <strong>Fluxo ao vivo.</strong>
-        <span>O Kernel 0.4.11 preserva a base multi-MT5 validada e mantém a interface responsiva durante encerramentos.</span>
-      </div>
-
-      <div class="notice neutral">
-        <strong>Sem senhas.</strong>
-        <span>O login é feito manualmente no MT5. O Market Hub lê apenas terminais já autenticados.</span>
+      <div class="sidebar-spacer"></div>
+      <div class="kernel-note">
+        <span class="status-dot ok" aria-hidden="true"></span>
+        <div><strong>Kernel protegido</strong><small>Baseline 0.4.11 validada</small></div>
       </div>
     </aside>
 
     <main>
       <header class="topbar">
         <div>
-          <h2 id="viewTitle">Terminais MT5</h2>
-          <p id="viewSubtitle">Crie instâncias controladas e mantenha múltiplas conexões simultâneas.</p>
+          <h2 id="viewTitle">Dashboard</h2>
+          <p id="viewSubtitle">Visão geral das instâncias, processos MT5 e leituras conectadas.</p>
         </div>
         <div class="status-group">
           <button type="button" class="theme-toggle" id="themeToggle" aria-pressed="false" title="Usar tema escuro">
@@ -61,7 +72,58 @@
         </div>
       </header>
 
-      <section class="view active" id="view-terminals">
+      <section class="view active" id="view-dashboard">
+        <section class="health-grid" aria-label="Resumo do sistema">
+          <article class="health-metric">
+            <span class="health-label">Terminais cadastrados</span>
+            <strong id="healthRegistered">0</strong>
+            <small>Instâncias controladas</small>
+          </article>
+          <article class="health-metric">
+            <span class="health-label">MT5 abertos</span>
+            <strong id="healthOpen">0</strong>
+            <small>Processos confirmados</small>
+          </article>
+          <article class="health-metric">
+            <span class="health-label">Leituras conectadas</span>
+            <strong id="healthConnected">0</strong>
+            <small>Sessões prontas</small>
+          </article>
+          <article class="health-metric">
+            <span class="health-label">Requer atenção</span>
+            <strong id="healthAttention">0</strong>
+            <small>Diagnósticos explícitos</small>
+          </article>
+        </section>
+
+        <section class="dashboard-grid">
+          <section class="card dashboard-terminal-card">
+            <div class="card-head">
+              <div>
+                <h3>Estado dos terminais</h3>
+                <p class="muted">Situação atual de cada instância cadastrada, sem dados simulados.</p>
+              </div>
+              <button type="button" data-view-target="terminals">Gerenciar terminais</button>
+            </div>
+            <div id="dashboardTerminalHealth" class="dashboard-terminal-list empty">Nenhum terminal cadastrado ainda.</div>
+          </section>
+
+          <div class="dashboard-side-stack">
+            <article class="card dashboard-state-card" id="dashboardBridgeCard">
+              <div class="summary-top"><span class="health-label">Comunicação local</span><span class="status-dot"></span></div>
+              <strong id="dashboardBridgeValue">Conectando</strong>
+              <p id="dashboardBridgeDetail">Aguardando a comunicação local com o processo Python.</p>
+            </article>
+            <article class="card dashboard-state-card" id="dashboardAttentionCard">
+              <div class="summary-top"><span class="health-label">Integridade operacional</span><span class="status-dot"></span></div>
+              <strong id="dashboardAttentionValue">Nenhuma pendência</strong>
+              <p id="dashboardAttentionDetail">Nenhuma falha confirmada nas instâncias cadastradas.</p>
+            </article>
+          </div>
+        </section>
+      </section>
+
+      <section class="view" id="view-terminals">
         <div class="grid two">
           <section class="card">
             <h3>Adicionar instância controlada</h3>
@@ -111,7 +173,7 @@
         </section>
       </section>
 
-      <section class="view" id="view-dashboard">
+      <section class="view" id="view-diagnostics">
         <section class="summary-grid" id="workerSummary"></section>
 
         <section class="card live-test-card">

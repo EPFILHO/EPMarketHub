@@ -12,9 +12,32 @@
     ]),
     dashboard: Object.freeze([
       'Dashboard',
-      'Fluxos rápidos e snapshots consolidados vindos de workers persistentes.',
+      'Visão geral das instâncias, processos MT5 e leituras conectadas.',
+    ]),
+    diagnostics: Object.freeze([
+      'Diagnóstico',
+      'Fluxos simultâneos e snapshots para validar as conexões do kernel.',
     ]),
   });
+  const ATTENTION_PROCESS_STATES = new Set([
+    'launch_failed',
+    'close_failed',
+    'duplicate_process',
+  ]);
+  const ATTENTION_WORKER_STATES = new Set([
+    'waiting_login',
+    'authentication_failed',
+    'account_mismatch',
+    'broker_disconnected',
+    'configuration_error',
+    'terminal_mismatch',
+    'unresponsive',
+    'attention_required',
+    'worker_start_failed',
+    'worker_crashed',
+    'stop_failed',
+    'error',
+  ]);
   const THEME_STORAGE_KEY = 'ep_market_hub_theme_v1';
 
   function normalizeTheme(theme) {
@@ -93,11 +116,35 @@
     );
   }
 
+  function terminalNeedsAttention(terminal, worker = {}) {
+    const instanceState = terminal?.instance_status?.state || 'ready';
+    if (instanceState !== 'ready') return true;
+    if (ATTENTION_PROCESS_STATES.has(terminal?.process_state)) return true;
+    return ATTENTION_WORKER_STATES.has(worker?.state);
+  }
+
+  function terminalHealthSummary(rows, states = {}) {
+    const terminals = Array.isArray(rows) ? rows : [];
+    const workers = terminals.map(terminal => states[terminal.id] || terminal.worker || {});
+    return {
+      registered: terminals.length,
+      open: terminals.filter(terminal => Boolean(terminal.running)).length,
+      workers: workers.filter(worker => Boolean(worker.alive)).length,
+      connected: workers.filter(worker => Boolean(worker.connected)).length,
+      attention: terminals.filter((terminal, index) => (
+        terminalNeedsAttention(terminal, workers[index])
+      )).length,
+    };
+  }
+
   function switchView(documentRef, view) {
     const metadata = VIEW_METADATA[view];
     if (!documentRef || !metadata) return false;
     documentRef.querySelectorAll('.nav-item').forEach(button => {
-      button.classList.toggle('active', button.dataset.view === view);
+      const active = button.dataset.view === view;
+      button.classList.toggle('active', active);
+      if (active) button.setAttribute?.('aria-current', 'page');
+      else button.removeAttribute?.('aria-current');
     });
     documentRef.querySelectorAll('.view').forEach(element => {
       element.classList.toggle('active', element.id === `view-${view}`);
@@ -120,5 +167,7 @@
     setTheme,
     storedTheme,
     switchView,
+    terminalHealthSummary,
+    terminalNeedsAttention,
   });
 }(typeof globalThis !== 'undefined' ? globalThis : this));

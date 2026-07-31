@@ -17,6 +17,7 @@ const lifecycleBusyTerminalIds = new Set();
 const pendingLifecycleOperations = new Map();
 const completedLifecycleOperations = new Map();
 let pendingOrphanCandidate = null;
+let bridgeReady = false;
 
 const LIVE_SLOT_IDS = ['live-1', 'live-2', 'live-3'];
 const LIVE_PREFERENCES = [
@@ -250,9 +251,11 @@ async function awaitLifecycleOperation(responseFactory, onProgress = null, scope
 }
 
 function setBridgeStatus(ok, text) {
+  bridgeReady = Boolean(ok);
   const el = document.getElementById('bridgeStatus');
   el.textContent = text;
   el.classList.toggle('ok', ok);
+  renderDashboardHealth();
 }
 
 function switchView(view) {
@@ -546,6 +549,7 @@ function renderTerminals(rows) {
     refreshDashboardTerminalSources(true);
     updateWorkersStatus();
     renderWorkerSummary();
+    renderDashboardHealth();
     applyLifecycleBusyState();
     return;
   }
@@ -612,6 +616,7 @@ function renderTerminals(rows) {
   refreshDashboardTerminalSources(true);
   updateWorkersStatus();
   renderWorkerSummary();
+  renderDashboardHealth();
   renderSelectedSnapshot();
   applyLifecycleBusyState();
   updateLiveProof();
@@ -714,6 +719,7 @@ function applyWorkerStates(rows) {
   updateWorkersStatus();
   refreshDashboardTerminalSources();
   renderWorkerSummary();
+  renderDashboardHealth();
   LIVE_SLOT_IDS.forEach((_, index) => renderLiveSlot(index + 1));
   applyLifecycleBusyState();
   updateLiveProof();
@@ -765,6 +771,67 @@ function renderWorkerSummary() {
     setTextIfChanged(card.querySelector('.summary-value'), 'Conectado');
     setTextIfChanged(card.querySelector('small'), `PID ${worker.pid || '—'} · ${worker.server || worker.message || ''}`);
   });
+}
+
+function renderDashboardHealth() {
+  const summary = MarketHubUI.terminalHealthSummary(terminals, workerStates);
+  setTextIfChanged(document.getElementById('healthRegistered'), summary.registered);
+  setTextIfChanged(document.getElementById('healthOpen'), summary.open);
+  setTextIfChanged(document.getElementById('healthConnected'), summary.connected);
+  setTextIfChanged(document.getElementById('healthAttention'), summary.attention);
+
+  const bridgeCard = document.getElementById('dashboardBridgeCard');
+  const bridgeValue = document.getElementById('dashboardBridgeValue');
+  const bridgeDetail = document.getElementById('dashboardBridgeDetail');
+  bridgeCard?.classList.toggle('healthy', bridgeReady);
+  bridgeCard?.classList.toggle('attention', !bridgeReady);
+  setTextIfChanged(bridgeValue, bridgeReady ? 'Ponte conectada' : 'Conectando');
+  setTextIfChanged(
+    bridgeDetail,
+    bridgeReady
+      ? `${summary.connected} leitura(s) conectada(s) em ${summary.workers} worker(s) ativo(s).`
+      : 'Aguardando a comunicação local com o processo Python.',
+  );
+
+  const attentionCard = document.getElementById('dashboardAttentionCard');
+  const attentionValue = document.getElementById('dashboardAttentionValue');
+  const attentionDetail = document.getElementById('dashboardAttentionDetail');
+  attentionCard?.classList.toggle('healthy', summary.attention === 0);
+  attentionCard?.classList.toggle('attention', summary.attention > 0);
+  setTextIfChanged(
+    attentionValue,
+    summary.attention === 0 ? 'Nenhuma pendência' : `${summary.attention} requer atenção`,
+  );
+  setTextIfChanged(
+    attentionDetail,
+    summary.attention === 0
+      ? 'Nenhuma falha confirmada nas instâncias cadastradas.'
+      : 'Consulte os badges em Terminais MT5 para ver a causa real.',
+  );
+
+  const list = document.getElementById('dashboardTerminalHealth');
+  if (!list) return;
+  if (!terminals.length) {
+    list.className = 'dashboard-terminal-list empty';
+    list.textContent = 'Nenhum terminal cadastrado ainda.';
+    return;
+  }
+  list.className = 'dashboard-terminal-list';
+  list.innerHTML = terminals.map(terminal => {
+    const worker = workerStates[terminal.id] || terminal.worker || {};
+    return `
+      <div class="dashboard-terminal-row">
+        <div class="dashboard-terminal-name">
+          <strong>${escapeHtml(terminal.label || terminal.id)}</strong>
+          <small>${escapeHtml(terminal.broker_name || 'Corretora não informada')} · ${escapeHtml(terminal.account_login || 'login manual')}</small>
+        </div>
+        <div class="dashboard-terminal-badges">
+          <span class="badge ${terminalProcessBadgeClass(terminal, worker)}">${escapeHtml(terminalProcessLabel(terminal, worker))}</span>
+          <span class="badge ${workerBadgeClass(worker)}">${escapeHtml(workerLabel(worker.state))}</span>
+        </div>
+      </div>
+    `;
+  }).join('');
 }
 
 function renderSymbols(rows) {
@@ -1744,6 +1811,7 @@ window.addEventListener('DOMContentLoaded', () => {
     }
   });
   document.querySelectorAll('.nav-item').forEach(btn => btn.addEventListener('click', () => switchView(btn.dataset.view)));
+  document.querySelectorAll('[data-view-target]').forEach(btn => btn.addEventListener('click', () => switchView(btn.dataset.viewTarget)));
   document.getElementById('btnCreateTerminal').addEventListener('click', createTerminal);
   document.getElementById('btnSaveTerminalEdit').addEventListener('click', saveTerminalEdit);
   document.querySelectorAll('[data-close-edit]').forEach(el => el.addEventListener('click', closeEditTerminal));
