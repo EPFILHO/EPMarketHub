@@ -207,9 +207,12 @@ button.danger { border-color: var(--bad-border); color: var(--bad); background: 
 .live-test-card { margin-bottom: 18px; }
 .live-head { align-items: center; }
 .proof-banner {
+  display: flex;
+  align-items: center;
   margin: 4px 0 16px;
   padding: 12px 14px;
-  min-height: 68px;
+  height: 92px;
+  overflow-y: auto;
   line-height: 1.45;
   border: 1px solid var(--line);
   border-radius: 14px;
@@ -262,6 +265,7 @@ button.danger { border-color: var(--bad-border); color: var(--bad); background: 
   .health-grid { grid-template-columns: 1fr 1fr; }
   .dashboard-terminal-row { align-items: flex-start; flex-direction: column; }
   .dashboard-terminal-badges { justify-content: flex-start; }
+  .proof-banner { height: 112px; }
   .live-card { display: block; }
 }
 

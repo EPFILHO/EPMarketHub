@@ -1096,15 +1096,15 @@ function updateLiveProof() {
     setHtmlIfChanged(el, `<strong>✓ Simultaneidade confirmada:</strong> 3 fluxos recentes, vindos de 3 terminais e PIDs independentes. Workers conectados: ${connectedWorkers}.`);
   } else if (activeSlotIds.length || stoppedCount) {
     el.classList.add('warn');
-    const issueText = issues.map(issue => (
-      `<strong>Fluxo ${issue.slotNumber}</strong> — ${escapeHtml(issue.terminalLabel)} · ${escapeHtml(issue.symbolName)}: ${escapeHtml(issue.detail)}`
-    )).join('; ');
     const activeSummary = activeSlotIds.length
       ? `${activelyPolled.length}/${activeSlotIds.length} fluxo(s) ativo(s) com leitura recente`
       : 'nenhum fluxo ativo';
     const stoppedSummary = stoppedCount ? ` · ${stoppedCount} fluxo(s) parado(s)` : '';
+    const issueSummary = issues.length
+      ? ` · ${issues.length} fluxo(s) exige(m) atenção; veja os painéis abaixo.`
+      : '';
     const heading = activeSlotIds.length ? 'Teste em andamento:' : 'Teste parado:';
-    setHtmlIfChanged(el, `<strong>${heading}</strong> ${activeSummary}${stoppedSummary} · ${connectedWorkers} worker(s) conectado(s).${issueText ? `<br>Atenção: ${issueText}.` : ''}`);
+    setHtmlIfChanged(el, `<strong>${heading}</strong>&nbsp;${activeSummary}${stoppedSummary} · ${connectedWorkers} worker(s) conectado(s).${issueSummary}`);
   } else {
     setTextIfChanged(el, `Configure os painéis para comprovar as conexões simultâneas. Workers conectados: ${connectedWorkers}.`);
   }
