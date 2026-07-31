@@ -52,7 +52,11 @@ ruff check .
 Se Node.js estiver disponível:
 
 ```bat
+node --check web/ui_foundation.js
+node --check web/terminal_presentation.js
 node --check web/app.js
+node tests/test_web_ui_foundation.js
+node tests/test_web_app_state.js
 ```
 
 ## Estilo de mudança

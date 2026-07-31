@@ -2,10 +2,10 @@
 
 ## Evoluções visuais futuras
 
-- Numerar os MT5 conforme a ordem alfabética exibida, renumerando-os quando o cadastro ou a ordenação mudar.
-- Reutilizar o número no badge da interface e, após validação técnica no Windows, no ícone da instância portátil.
+- A numeração visual pela ordem alfabética e sua reutilização dentro da interface entram na 0.4.12.
+- Após validação técnica no Windows, avaliar identificação externa da instância sem modificar `terminal64.exe`.
 - Adicionar splashscreen coerente com a identidade do EP Market Hub durante o carregamento do QWebEngineView.
-- Implementar numeração e splash somente após aprovação de escopo e validação final da GUI responsiva 0.4.11.
+- Implementar splash somente após a validação visual da 0.4.12.
 
 ## 0.4.11 — GUI responsiva
 

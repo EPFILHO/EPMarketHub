@@ -2,15 +2,15 @@
 
 A baseline `v0.4.11-baseline` preserva o kernel 0.4.10 validado e mantém fora da thread gráfica as esperas de encerramento. A 0.4.12 evolui somente a camada de apresentação: organização das telas, temas, navegação, ícones internos e numeração visual derivada. Não adiciona análises, candles, banco local, novos módulos de negócio nem altera o kernel.
 
-## Escopo aprovado para a 0.4.12
+## Interface 0.4.12 implementada localmente
 
-- Tema claro como padrão e tema escuro opcional, com preferência local persistida.
-- Dashboard de saúde usando somente estados reais já fornecidos pela bridge.
-- Gestão de instâncias concentrada em **Terminais MT5**.
-- Fluxos simultâneos e snapshot consolidados preservados em **Diagnóstico**.
-- Numeração visual calculada pela ordem alfabética exibida, nunca persistida nem usada como identidade.
-- Ícones somente na interface; nenhuma modificação de `terminal64.exe` nesta etapa.
-- Pequenas extrações do JavaScript monolítico somente quando independentes do QWebChannel e cobertas por testes.
+- Tema claro como padrão e tema escuro opcional, com preferência local persistida e fallback seguro sem armazenamento.
+- Dashboard de saúde usando somente estados reais já fornecidos pela bridge: cadastros, processos abertos, leituras conectadas e diagnósticos que exigem atenção.
+- Gestão de instâncias concentrada em **Terminais MT5**, com os mesmos fluxos de criação, edição, abertura, leitura, fechamento e exclusão.
+- Fluxos simultâneos e snapshot consolidados preservados em **Diagnóstico**, com os mesmos IDs e handlers da baseline.
+- Numeração visual calculada pela ordem alfabética exibida, recalculada a cada payload e nunca persistida nem usada como identidade.
+- Ícones somente na navegação da interface; nenhum executável foi modificado.
+- Tema, navegação, ordenação e resumo extraídos para `web/ui_foundation.js`; regras puras dos cards extraídas para `web/terminal_presentation.js`.
 
 ## GUI responsiva 0.4.11
 
@@ -75,8 +75,8 @@ A baseline `v0.4.11-baseline` preserva o kernel 0.4.10 validado e mantém fora d
 
 - Mapeamento de símbolo por terminal ainda não existe.
 - Contratos B3 precisam ser atualizados manualmente na lista de aliases.
-- A interface web ainda está concentrada em `web/app.js`.
+- A integração QWebChannel e os fluxos interativos ainda estão concentrados em `web/app.js`; fundações visuais e regras puras de apresentação já foram extraídas em pequenas fatias.
 - A ponte PySide/QWebChannel ainda está concentrada em `gui/main_window.py`.
 - Processos reais, QWebEngine e a biblioteca `MetaTrader5` não são exercitados pela suíte multiplataforma.
-- Numeração alfabética dos MT5 e splashscreen permanecem como evoluções futuras.
-- O Dashboard atual é uma bancada visual de três fluxos e poderá mudar quando a camada de plataforma começar a evoluir.
+- Splashscreen e identificação externa das janelas MT5 permanecem como evoluções futuras.
+- O Dashboard agora apresenta saúde operacional; a bancada visual de três fluxos foi preservada em **Diagnóstico**.

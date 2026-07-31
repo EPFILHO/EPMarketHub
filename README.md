@@ -17,7 +17,10 @@ Funciona hoje:
 - Limite simultâneo definido somente pela política interna `MAX_ACTIVE_TERMINALS` (atualmente `3`); não é uma preferência do usuário e os cadastros continuam ilimitados.
 - Seleção explícita dos terminais que serão abertos.
 - Edição e exclusão de cadastros pela interface.
-- Dashboard mostrando apenas terminais conectados.
+- Dashboard de saúde com todos os terminais cadastrados, contagens e diagnósticos derivados somente do estado real das instâncias.
+- Temas claro e escuro, com preferência local persistida e tema claro como padrão.
+- Navegação separada entre Dashboard, Terminais MT5, Ativos e Diagnóstico.
+- Numeração visual dos terminais recalculada pela ordem alfabética, sem persistência.
 - Teste ao vivo com até 3 fluxos simultâneos.
 - Resolução de aliases de símbolos, priorizando símbolos tradáveis e com cotação válida.
 - Fechamento dos workers e MT5 controlados ao encerrar o app.
@@ -85,7 +88,7 @@ Instâncias reais, logs, sessões do MT5, executáveis, credenciais e dados pess
 app.py                  Entrada do app.
 core/                   Regras de negócio, MT5, workers e persistência.
 gui/                    Janela PySide6 e ponte Python ↔ JavaScript.
-web/                    Interface HTML/CSS/JS carregada no QWebEngineView.
+web/                    Interface HTML/CSS/JS e módulos puros de apresentação carregados no QWebEngineView.
 docs/                   Documentação atual para manutenção e Codex.
 tests/                  Caracterização automatizada do kernel e da interface de estado.
 MT5/                    Pasta da instalação-modelo; recebe terminal64.exe local.

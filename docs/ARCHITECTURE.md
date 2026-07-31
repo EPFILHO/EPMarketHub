@@ -13,6 +13,8 @@ app.py
        ├─ SymbolRegistry
        ├─ WorkerManager
        └─ QWebChannel → web/app.js
+                          ├─ ui_foundation.js
+                          └─ terminal_presentation.js
 
 Worker MT5 #1 → terminal64.exe da instância A
 Worker MT5 #2 → terminal64.exe da instância B
@@ -63,7 +65,9 @@ Tipos importantes de mensagens:
 
 Eventos carregam a identidade do processo. O supervisor descarta mensagens residuais de um PID anterior e eventos tardios de um terminal já marcado para parada, usa entrega não bloqueante para eventos volumosos e uma espera curta e limitada para eventos críticos. A parada começa graciosa e escala para `terminate()` e `kill()` quando necessário; um processo resistente permanece visível como erro. Na 0.4.11 essas mesmas esperas são executadas pelo executor serial de ciclo de vida, sem alterar protocolo ou temporizações.
 
-O frontend recebe o estado por métodos expostos no QWebChannel e renderiza apenas terminais conectados no Dashboard.
+O frontend recebe o estado por métodos expostos no QWebChannel. `web/app.js` continua responsável pela integração com a bridge e pelos fluxos interativos; tema, navegação, ordenação, numeração e resumo de saúde vivem em `ui_foundation.js`, enquanto rótulos, badges e regras puras de ações dos cards vivem em `terminal_presentation.js`. Esses módulos não acessam Qt, processos, filas nem a biblioteca MT5.
+
+O Dashboard apresenta a saúde real de todas as instâncias cadastradas. Os três fluxos simultâneos e o snapshot consolidado permanecem disponíveis na área **Diagnóstico**, sem alteração de IDs, handlers ou protocolo.
 
 O estado de um cadastro não é reduzido a um único rótulo. `terminal_states.py`
 mantém separadas a integridade da instância, a existência/transição do processo

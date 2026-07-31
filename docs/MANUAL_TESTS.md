@@ -12,7 +12,7 @@
 1. Marque até o limite atual de terminais na tela **Terminais MT5**.
 2. Clique em **Abrir selecionados**.
 3. Confirme que todos abrem e que as leituras entram em estado conectado.
-4. Vá ao Dashboard.
+4. Vá a **Diagnóstico**.
 5. Com a política atual em 3, configure 3 fluxos, cada um em um terminal diferente.
 6. Clique em **Iniciar 3 fluxos**.
 7. Confirme que aparecem 3 PIDs diferentes e que leituras/ticks avançam.
@@ -47,7 +47,7 @@
 3. Aplique a alteração e confirme que o botão volta a **Iniciar** desativado.
 4. Atrase temporariamente um fluxo ainda ativo e confirme que o banner informa seu número, terminal, ativo e idade da última leitura como **leitura atrasada**.
 5. Confirme que o banner mantém espaço para duas linhas e não desloca os cards quando o detalhe aparece.
-6. Feche o MT5 usado por um dos fluxos e volte ao Dashboard.
+6. Feche o MT5 usado por um dos fluxos e volte a **Diagnóstico**.
 7. Confirme que o seletor preserva o terminal anterior com a indicação **MT5 fechado**, sem escolher outra corretora automaticamente.
 8. Confirme que bid, ask, PID e demais dados antigos são limpos e que o fluxo é contado como parado, não como leitura atrasada.
 9. Selecione outro terminal conectado e confirme que **Alterar** é habilitado.
@@ -58,7 +58,7 @@
 2. Confirme que **Fechar selecionados** permanece habilitado para os terminais abertos selecionados.
 3. Feche um MT5, selecione exatamente um terminal fechado e confirme que **Abrir selecionados** volta a ser habilitado.
 4. Confirme que os cards não exibem mais o botão **Snapshot**.
-5. No Dashboard, confirme que o snapshot consolidado continua atualizando automaticamente e que **Solicitar atualização agora** continua funcional.
+5. Em **Diagnóstico**, confirme que o snapshot consolidado continua atualizando automaticamente e que **Solicitar atualização agora** continua funcional.
 
 ## Exclusão
 
@@ -67,6 +67,24 @@
 3. Clique em **Excluir**.
 4. Digite `EXCLUIR`.
 5. Confirme que cadastro e pasta local foram removidos.
+
+## Fundação visual 0.4.12
+
+Use a instalação sincronizada com os mesmos cadastros da validação do kernel. Não altere executáveis nem JSONs manualmente.
+
+1. Inicie o aplicativo sem preferência de tema e confirme o tema claro, com sidebar branca, fundo claro e textos legíveis.
+2. Alterne para o tema escuro, navegue por todas as telas, feche e abra novamente o aplicativo e confirme que a preferência foi preservada.
+3. Volte ao tema claro e confirme que Dashboard, Terminais MT5, Ativos, Diagnóstico, seletores, modais e toasts permanecem legíveis; estados não podem depender somente de cor.
+4. Confirme a navegação na ordem **Dashboard**, **Terminais MT5**, **Ativos** e **Diagnóstico**, com título, subtítulo e indicação visual da tela ativa coerentes.
+5. No Dashboard, compare **Terminais cadastrados**, **MT5 abertos**, **Leituras conectadas** e **Requer atenção** com os cards reais em **Terminais MT5**.
+6. Confirme que o Dashboard não mostra força, tendência, notícias, cotações ou qualquer dado analítico ainda inexistente; os módulos futuros devem aparecer apenas como **Em breve**.
+7. Provoque apenas estados reais seguros, como MT5 fechado, aguardando login e corretora desconectada, e confirme que o resumo de atenção e os badges dos terminais concordam.
+8. Cadastre ou edite apelidos descartáveis para mudar a ordem alfabética e confirme a renumeração `01`, `02`, `03` nos cards, no Dashboard e nos seletores, sem alterar o ID ou a pasta da instância.
+9. Exclua um cadastro descartável pelo fluxo normal e confirme que os números seguintes são compactados, sem lacunas.
+10. Em **Diagnóstico**, configure os três fluxos simultâneos e o snapshot como na baseline; confirme que PIDs, leituras, ticks, seletores e ações continuam funcionando.
+11. Redimensione a janela nos dois temas e confirme que sidebar, métricas, cards, badges e botões não se sobrepõem nem desaparecem.
+12. Navegue com `Tab` e confirme foco visível em links, botões, campos e seletor de tema; pressione `Esc` nos modais e seletores e confirme o comportamento preservado.
+13. Repita fechamento individual, em lote e pelo X da aplicação e confirme a mesma responsividade e o mesmo isolamento validados na 0.4.11.
 
 ## Fechamento do kernel 0.4.10
 

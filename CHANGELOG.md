@@ -146,3 +146,17 @@
 - **Parar leitura** mantém o processo como **MT5 aberto**; somente operações que realmente tentam fechar o terminal podem produzir **Falha ao fechar MT5**.
 - Protocolo worker/bridge v1, polling, temporizações, limites e aparência não relacionada ao encerramento permanecem inalterados.
 - Numeração e ícones planejados para a 0.4.12 não foram iniciados.
+
+## 0.4.12
+
+- Tema claro como padrão e tema escuro opcional, com preferência persistida localmente sem depender da bridge.
+- Paleta convertida em tokens semânticos para superfícies, campos, modais, seletores, badges e estados nos dois temas.
+- Navegação reorganizada entre Dashboard, Terminais MT5, Ativos e Diagnóstico, com ícones internos e indicação acessível da tela ativa.
+- Dashboard substitui a antiga bancada técnica por um resumo real de cadastros, processos MT5, leituras conectadas e diagnósticos que exigem atenção.
+- Os três fluxos simultâneos, seus PIDs, ticks e o snapshot consolidado permanecem intactos na nova área **Diagnóstico**.
+- Numeração visual `01`, `02`, `03` derivada da ordem alfabética e recalculada após qualquer novo payload de cadastro, sem persistência nem mudança de identidade.
+- Números reaproveitados nos cards, no Dashboard, nos resumos conectados e nos seletores de Diagnóstico.
+- Navegação, tema, ordenação, numeração e resumo de saúde extraídos para `web/ui_foundation.js`.
+- Rótulos, badges e regras puras de habilitação dos cards extraídos para `web/terminal_presentation.js`, preservando a API consumida por `app.js`.
+- Foco visível, regiões de status e estados de atenção aprimorados sem alterar ações, slots ou tempos do kernel.
+- Nenhum worker, protocolo, polling, fila, temporização, limite, executável ou dado de runtime foi alterado.
