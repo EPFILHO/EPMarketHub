@@ -1,6 +1,7 @@
 from pathlib import Path
 
 from core.terminal_states import (
+    IPC_ATTACHED_STATES,
     RECONNECT_ATTENTION_ATTEMPTS,
     InstanceIntegrityState,
     ProcessState,
@@ -48,6 +49,17 @@ def test_repeated_transient_failure_requires_attention_without_hiding_permanent_
         )
         == WorkerConnectionState.AUTHENTICATION_FAILED.value
     )
+
+
+def test_ipc_attached_states_keep_trade_session_failures_separate() -> None:
+    assert IPC_ATTACHED_STATES == {
+        WorkerConnectionState.CONNECTED.value,
+        WorkerConnectionState.WAITING_LOGIN.value,
+        WorkerConnectionState.AUTHENTICATION_FAILED.value,
+        WorkerConnectionState.ACCOUNT_MISMATCH.value,
+        WorkerConnectionState.BROKER_DISCONNECTED.value,
+    }
+    assert WorkerConnectionState.RECONNECTING.value not in IPC_ATTACHED_STATES
 
 
 def test_account_identity_accepts_numeric_format_but_rejects_another_account() -> None:
@@ -104,4 +116,19 @@ def test_completing_startup_does_not_hide_process_failures() -> None:
     assert (
         states.resolve("close-failed", running=True, process_count=1)
         == ProcessState.CLOSE_FAILED.value
+    )
+
+
+def test_generic_worker_activity_completes_opening_but_not_reopening() -> None:
+    states = TerminalProcessStateMachine()
+    states.set("opening", ProcessState.OPENING)
+    states.set("reopening", ProcessState.REOPENING)
+
+    states.complete_opening("opening")
+    states.complete_opening("reopening")
+
+    assert states.resolve("opening", running=True, process_count=1) == ProcessState.OPEN.value
+    assert (
+        states.resolve("reopening", running=True, process_count=2)
+        == ProcessState.REOPENING.value
     )

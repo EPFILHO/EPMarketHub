@@ -170,6 +170,11 @@ assert.equal(context.workerLabel('broker_disconnected'), 'corretora desconectada
 assert.equal(context.workerLabel('worker_start_failed'), 'falha ao iniciar leitura');
 assert.equal(context.workerLabel('worker_crashed'), 'worker interrompido');
 assert.equal(context.workerLabel('stop_failed'), 'falha ao encerrar worker');
+assert.equal(context.lifecycleProcessState({ mt5_running: true }, false), 'open');
+assert.equal(context.lifecycleProcessState({ mt5_running: false }, false), 'closed');
+assert.equal(context.lifecycleProcessState({ mt5_running: true }, true), 'close_failed');
+assert.equal(context.lifecycleProcessState({ mt5_running: false }, true), 'closed');
+assert.match(context.receiveLifecycleProgress.toString(), /payload\?\.close_mt5/);
 assert.equal(
   context.terminalProcessLabel(
     { running: true, process_state: 'closing', instance_status: { state: 'ready' } },
@@ -208,13 +213,29 @@ assert.equal(
   '2 de 3 terminal(is) fechado(s); 1 falha(s).',
 );
 const progressiveCloseSource = context.closeSelectedTerminals.toString();
-assert.match(progressiveCloseSource, /bridge\.stopTerminal\(terminalId\)/);
-assert.match(progressiveCloseSource, /setLocalTerminalShutdownTransition\(terminalId\)/);
-assert.match(progressiveCloseSource, /setLocalTerminalShutdownTransition\(terminalId\);\s*await waitForUiPaint\(\)/);
-assert.doesNotMatch(progressiveCloseSource, /bridge\.closeSelectedTerminals/);
+assert.match(progressiveCloseSource, /bridge\.closeSelectedTerminals\(JSON\.stringify\(ids\)\)/);
+assert.match(progressiveCloseSource, /ids\.forEach\(setLocalTerminalShutdownTransition\);\s*await waitForUiPaint\(\)/);
+assert.match(progressiveCloseSource, /Fechando \$\{progress\.index\}\/\$\{progress\.total\}/);
+assert.match(progressiveCloseSource, /awaitLifecycleOperation/);
 
 const individualCloseSource = context.stopTerminal.toString();
 assert.match(individualCloseSource, /setLocalTerminalShutdownTransition\(id\);\s*await waitForUiPaint\(\)/);
+assert.match(individualCloseSource, /bridge\.stopTerminal\(id\)/);
+assert.match(individualCloseSource, /terminalIds: \[id\]/);
+
+const shutdownTransitionSource = context.showShutdownTransitions.toString();
+assert.match(shutdownTransitionSource, /setLifecycleBusy\(true, \{ global: true \}\)/);
+assert.match(source, /bridge\.lifecycleProgress\.connect\(receiveLifecycleProgress\)/);
+assert.match(source, /bridge\.lifecycleFinished\.connect\(receiveLifecycleFinished\)/);
+assert.match(context.updateSelectionUi.toString(), /selectedHasLifecycleBusy/);
+assert.doesNotMatch(source, /lifecycleInProgress/);
+vm.runInContext("lifecycleBusyTerminalIds.add('one')", context);
+assert.equal(context.lifecycleTerminalBusy('one'), true);
+assert.equal(context.lifecycleTerminalBusy('two'), false);
+assert.equal(context.lifecycleScopeConflicts({ terminalIds: ['one'] }), true);
+assert.equal(context.lifecycleScopeConflicts({ terminalIds: ['two'] }), false);
+assert.equal(context.lifecycleScopeConflicts({ global: true }), true);
+vm.runInContext("lifecycleBusyTerminalIds.clear()", context);
 
 const closedBeyondCapacity = context.terminalBulkActionState(
   terminalRows,

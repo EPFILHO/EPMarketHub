@@ -1,10 +1,10 @@
-# EP Market Hub — Kernel 0.4.10
+# EP Market Hub — 0.4.11
 
 Aplicativo desktop local para organizar instâncias controladas do MetaTrader 5 e ler dados de mercado por meio da biblioteca Python `MetaTrader5`.
 
-Esta versão fecha o primeiro ciclo de endurecimento do kernel sem introduzir módulos de negócio novos. O ciclo de vida de processos, filas, persistência local e encerramento passa a falhar de forma explícita e recuperável. A parte principal permanece preservada: cada terminal MT5 ativo mantém uma conexão em seu próprio processo Python independente.
+Esta versão mantém o kernel endurecido da 0.4.10 e torna a interface responsiva durante o encerramento de workers e MT5. As esperas, `terminate()` e `kill()` continuam confirmando o estado real dos processos, mas são executadas fora da thread gráfica por uma operação serializada; QWebEngine, QWebChannel e toda atualização visual permanecem na thread principal do Qt. No fechamento individual, somente o terminal envolvido fica indisponível: as demais contas/corretoras continuam recebendo atualizações e aceitando ações.
 
-A baseline 0.4.9 foi validada manualmente no Windows em 17 de julho de 2026 com instâncias MT5 reais e conexões simultâneas. O hardening 0.4.10 possui validação automatizada; sua rodada manual final com MT5 real está descrita em `docs/MANUAL_TESTS.md`.
+A baseline 0.4.9 e o kernel 0.4.10 foram validados manualmente no Windows com instâncias MT5 reais e conexões simultâneas. A rodada manual final da GUI responsiva 0.4.11 está descrita em `docs/MANUAL_TESTS.md`.
 
 ## Estado da base
 

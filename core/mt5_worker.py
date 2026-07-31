@@ -14,7 +14,11 @@ import psutil
 from .market_snapshot import build_snapshot_from_connector, resolve_symbol_aliases
 from .models import SymbolDefinition, TerminalProfile
 from .mt5_connector import MT5Connector
-from .terminal_states import WorkerConnectionState, state_after_reconnect_attempts
+from .terminal_states import (
+    IPC_ATTACHED_STATES,
+    WorkerConnectionState,
+    state_after_reconnect_attempts,
+)
 from .worker_protocol import WorkerEvent, now_iso, valid_worker_command
 
 logger = logging.getLogger(__name__)
@@ -50,6 +54,12 @@ def _emit(
 
 def _status_payload(status) -> dict[str, Any]:
     return status.to_dict()
+
+
+def _keeps_ipc_attachment(state: str) -> bool:
+    """Separa sessão de negociação indisponível de falha no canal IPC do MT5."""
+
+    return state in IPC_ATTACHED_STATES
 
 
 def _normalized_executable(value: str | Path) -> str:
@@ -287,6 +297,26 @@ def mt5_worker_main(
                                 "reconnect_attempts": reconnect_attempts,
                             },
                         )
+                    elif connector.initialized and _keeps_ipc_attachment(status.state):
+                        reconnect_attempts = 0
+                        last_state = status.state
+                        last_message = status.message
+                        available_symbol_states.clear()
+                        for stream in live_streams.values():
+                            stream["resolved_symbol"] = None
+                        _emit(
+                            event_queue,
+                            profile.id,
+                            "status",
+                            {
+                                **connection_meta,
+                                "state": last_state,
+                                "alive": True,
+                                "connected": False,
+                                "pid": os.getpid(),
+                                "reconnect_attempts": reconnect_attempts,
+                            },
+                        )
                     else:
                         reconnect_attempts += 1
                         connector.shutdown()
@@ -311,25 +341,75 @@ def mt5_worker_main(
                             },
                         )
 
-            if connector.initialized:
+            elif connector.initialized:
                 current_status = connector.connection_status()
                 connection_meta = _status_payload(current_status)
                 if not current_status.ok:
-                    reconnect_attempts += 1
                     reported_state = (
                         current_status.state or WorkerConnectionState.RECONNECTING.value
                     )
-                    last_state = state_after_reconnect_attempts(
-                        reported_state,
-                        reconnect_attempts,
-                    )
-                    last_message = current_status.message
-                    connector.shutdown()
-                    available_symbol_states.clear()
-                    for stream in live_streams.values():
-                        stream["resolved_symbol"] = None
-                    next_connect = now + reconnect_seconds
-                    if _terminal_process_running(profile.terminal_exe):
+                    if _keeps_ipc_attachment(reported_state):
+                        previous_state = last_state
+                        reconnect_attempts = 0
+                        last_state = reported_state
+                        last_message = current_status.message
+                        if previous_state != last_state:
+                            available_symbol_states.clear()
+                            for stream in live_streams.values():
+                                stream["resolved_symbol"] = None
+                            _emit(
+                                event_queue,
+                                profile.id,
+                                "status",
+                                {
+                                    **connection_meta,
+                                    "state": last_state,
+                                    "alive": True,
+                                    "connected": False,
+                                    "pid": os.getpid(),
+                                    "reconnect_attempts": reconnect_attempts,
+                                },
+                            )
+                    else:
+                        reconnect_attempts += 1
+                        last_state = state_after_reconnect_attempts(
+                            reported_state,
+                            reconnect_attempts,
+                        )
+                        last_message = current_status.message
+                        connector.shutdown()
+                        available_symbol_states.clear()
+                        for stream in live_streams.values():
+                            stream["resolved_symbol"] = None
+                        next_connect = now + reconnect_seconds
+                        if _terminal_process_running(profile.terminal_exe):
+                            _emit(
+                                event_queue,
+                                profile.id,
+                                "status",
+                                {
+                                    **connection_meta,
+                                    "state": last_state,
+                                    "alive": True,
+                                    "connected": False,
+                                    "pid": os.getpid(),
+                                    "reconnect_attempts": reconnect_attempts,
+                                },
+                            )
+                        else:
+                            last_state = WorkerConnectionState.REOPENING_TERMINAL.value
+                            last_message = "MT5 fechado; aguardando reabertura controlada."
+                            _emit_terminal_restart_required(event_queue, profile, reconnect_attempts)
+                else:
+                    if last_state != WorkerConnectionState.CONNECTED.value:
+                        reconnect_attempts = 0
+                        last_state = WorkerConnectionState.CONNECTED.value
+                        last_message = current_status.message
+                        next_snapshot = 0.0
+                        next_live_poll = 0.0
+                        available_symbol_states.clear()
+                        for stream in live_streams.values():
+                            stream["resolved_symbol"] = None
                         _emit(
                             event_queue,
                             profile.id,
@@ -338,16 +418,11 @@ def mt5_worker_main(
                                 **connection_meta,
                                 "state": last_state,
                                 "alive": True,
-                                "connected": False,
+                                "connected": True,
                                 "pid": os.getpid(),
                                 "reconnect_attempts": reconnect_attempts,
                             },
                         )
-                    else:
-                        last_state = WorkerConnectionState.REOPENING_TERMINAL.value
-                        last_message = "MT5 fechado; aguardando reabertura controlada."
-                        _emit_terminal_restart_required(event_queue, profile, reconnect_attempts)
-                else:
                     if force_snapshot or now >= next_snapshot:
                         snapshot = build_snapshot_from_connector(profile, connector, symbols)
                         _emit(

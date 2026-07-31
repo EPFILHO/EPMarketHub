@@ -138,6 +138,27 @@ def test_broker_disconnection_is_not_reported_as_ipc_failure(monkeypatch) -> Non
     assert status.state == WorkerConnectionState.BROKER_DISCONNECTED.value
 
 
+def test_missing_terminal_info_is_a_real_ipc_failure_even_with_account_data(
+    monkeypatch,
+) -> None:
+    fake_mt5 = SimpleNamespace(
+        terminal_info=lambda: None,
+        account_info=lambda: SimpleNamespace(
+            login=111,
+            server="Sandbox-Server",
+            company="Sandbox",
+        ),
+        last_error=lambda: (-10005, "IPC timeout"),
+    )
+    monkeypatch.setattr("core.mt5_connector.mt5", fake_mt5)
+
+    status = build_initialized_connector("111").connection_status()
+
+    assert status.ok is False
+    assert status.state == WorkerConnectionState.RECONNECTING.value
+    assert status.message == MT5_COMMUNICATION_GUIDANCE
+
+
 def test_connection_to_another_terminal_path_is_rejected(tmp_path, monkeypatch) -> None:
     expected_exe = tmp_path / "expected" / "terminal64.exe"
     fake_mt5 = SimpleNamespace(

@@ -5,7 +5,20 @@
 - Numerar os MT5 conforme a ordem alfabética exibida, renumerando-os quando o cadastro ou a ordenação mudar.
 - Reutilizar o número no badge da interface e, após validação técnica no Windows, no ícone da instância portátil.
 - Adicionar splashscreen coerente com a identidade do EP Market Hub durante o carregamento do QWebEngineView.
-- Implementar numeração e splash somente após aprovação de escopo e validação final do kernel 0.4.10.
+- Implementar numeração e splash somente após aprovação de escopo e validação final da GUI responsiva 0.4.11.
+
+## 0.4.11 — GUI responsiva
+
+- Executar encerramento bloqueante fora da thread gráfica, preservando afinidade dos objetos Qt.
+- Serializar operações conflitantes e retornar progresso/conclusão por sinais enfileirados.
+- Preservar protocolo v1, polling, temporizações, limites e confirmação real de processos.
+- Validar manualmente no Windows com MT5 reais antes de publicar ou avançar a `main`.
+
+## 0.4.12 — numeração e ícones MT5
+
+- Iniciar somente após aprovação manual da 0.4.11.
+- Tratar a numeração como apresentação derivada da ordem alfabética, nunca como ID persistido.
+- Avaliar os ícones numerados sem alterar workers, protocolo ou kernel.
 
 ## 0.4.10 — fechamento do kernel
 

@@ -5,6 +5,7 @@ import re
 import shutil
 import subprocess
 import sys
+import threading
 from collections.abc import Iterable
 from pathlib import Path
 from uuid import uuid4
@@ -27,6 +28,7 @@ class TerminalManager:
         self.base_mt5_dir.mkdir(parents=True, exist_ok=True)
         self._processes: dict[str, subprocess.Popen] = {}
         self._known_profiles: dict[str, TerminalProfile] = {}
+        self._lock = threading.RLock()
 
     @staticmethod
     def sanitize_id(value: str) -> str:
@@ -93,7 +95,8 @@ class TerminalManager:
         return self.instance_status(profile)
 
     def remember(self, profile: TerminalProfile) -> None:
-        self._known_profiles[profile.id] = profile
+        with self._lock:
+            self._known_profiles[profile.id] = profile
 
     def create_instance_from_base(self, instance_slug: str, overwrite: bool = False) -> Path:
         status = self.base_status()
@@ -305,7 +308,8 @@ class TerminalManager:
             raise FileNotFoundError(f"terminal64.exe não encontrado: {terminal_exe}")
 
         self.remember(profile)
-        existing = self._processes.get(profile.id)
+        with self._lock:
+            existing = self._processes.get(profile.id)
         if existing and existing.poll() is None:
             return existing
         if self._find_processes(profile):
@@ -322,18 +326,23 @@ class TerminalManager:
             startupinfo.wShowWindow = 6  # SW_MINIMIZE
 
         proc = subprocess.Popen(args, cwd=str(terminal_exe.parent), startupinfo=startupinfo)
-        self._processes[profile.id] = proc
+        with self._lock:
+            self._processes[profile.id] = proc
         return proc
 
     def stop(self, terminal_id: str, timeout: int = 8, profile: TerminalProfile | None = None) -> bool:
-        proc = self._processes.get(terminal_id)
+        with self._lock:
+            proc = self._processes.get(terminal_id)
         stopped = False
         if proc:
             if proc.poll() is None:
                 stopped = self._close_process(proc, timeout) or stopped
-            self._processes.pop(terminal_id, None)
+            with self._lock:
+                if self._processes.get(terminal_id) is proc:
+                    self._processes.pop(terminal_id, None)
 
-        profile = profile or self._known_profiles.get(terminal_id)
+        with self._lock:
+            profile = profile or self._known_profiles.get(terminal_id)
         if profile:
             self.remember(profile)
             for external in self._find_processes(profile):
@@ -345,8 +354,9 @@ class TerminalManager:
         return sum(1 for profile in profiles if self.is_running(profile.id, profile))
 
     def forget(self, terminal_id: str) -> None:
-        self._processes.pop(terminal_id, None)
-        self._known_profiles.pop(terminal_id, None)
+        with self._lock:
+            self._processes.pop(terminal_id, None)
+            self._known_profiles.pop(terminal_id, None)
 
     def stage_delete_instance(self, profile: TerminalProfile) -> tuple[Path, Path]:
         """Move a pasta para um nome temporário antes da exclusão definitiva."""
@@ -396,10 +406,12 @@ class TerminalManager:
         return stopped
 
     def is_running(self, terminal_id: str, profile: TerminalProfile | None = None) -> bool:
-        proc = self._processes.get(terminal_id)
+        with self._lock:
+            proc = self._processes.get(terminal_id)
         if proc and proc.poll() is None:
             return True
-        profile = profile or self._known_profiles.get(terminal_id)
+        with self._lock:
+            profile = profile or self._known_profiles.get(terminal_id)
         if profile:
             self.remember(profile)
             return bool(self._find_processes(profile))
@@ -410,7 +422,8 @@ class TerminalManager:
 
     def process_count(self, profile: TerminalProfile) -> int:
         processes = self._find_processes(profile)
-        tracked = self._processes.get(profile.id)
+        with self._lock:
+            tracked = self._processes.get(profile.id)
         tracked_count = int(bool(tracked and tracked.poll() is None))
         # O terminal pode substituir o PID usado no lançamento durante seu bootstrap.
         # Nesse intervalo, o Popen e a varredura do Windows representam a mesma

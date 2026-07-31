@@ -1,6 +1,21 @@
-# Status atual — Kernel 0.4.10
+# Status atual — 0.4.11
 
-A 0.4.10 fecha o primeiro ciclo de hardening do kernel construído sobre a baseline funcional 0.4.7 e a interface validada da 0.4.9. Não adiciona análises, candles, banco local nem novos módulos de negócio.
+A 0.4.11 preserva o kernel 0.4.10 validado e remove da thread gráfica as esperas de encerramento. Não adiciona análises, candles, banco local, novos módulos de negócio, numeração ou ícones.
+
+## GUI responsiva 0.4.11
+
+- Uma única thread Python dedicada executa o trabalho bloqueante por vez; solicitações de terminais distintos podem ficar enfileiradas sem bloquear globalmente a GUI.
+- A bridge e os objetos Qt permanecem na thread principal; progresso e conclusão retornam por sinais enfileirados.
+- No fechamento individual, o polling continua para os demais terminais e o alvo usa seu snapshot; somente o shutdown global suspende polling e serve snapshots integrais.
+- Fechamentos individual, em lote, de leituras e pelo X mantêm a janela pintando e respondendo.
+- Ações conflitantes são recusadas no backend e desabilitadas no frontend até a conclusão.
+- IDs de operação impedem encerramento duplo e descartam sinais tardios.
+- O estado ocupado é isolado por terminal: fechar uma conta não desabilita botões nem interrompe o polling das outras contas/corretoras.
+- Falhas são isoladas por terminal e o shutdown global termina somente após confirmação ou falha explícita.
+- Tempos de espera, `terminate()`, `kill()`, protocolo v1, polling e limite simultâneo não mudaram.
+- A conexão IPC com o terminal e a sessão da corretora são tratadas separadamente: corretora desconectada mantém worker e IPC ativos, não escala para falha genérica e recupera automaticamente.
+- Cada fechamento externo do MT5, enquanto a leitura estiver ativa, solicita nova reabertura minimizada; atividade genérica de reconexão não encerra essa transição nem cria falso diagnóstico de processo duplicado.
+- Parar somente a leitura não altera o estado do processo MT5.
 
 ## Kernel preservado
 
@@ -41,11 +56,10 @@ A 0.4.10 fecha o primeiro ciclo de hardening do kernel construído sobre a basel
 ## Validação
 
 - A 0.4.9 foi validada manualmente no Windows com MT5 reais em 17 de julho de 2026.
-- A 0.4.10 passa pela suíte automatizada multiplataforma e pelos testes de regras JavaScript.
+- A 0.4.10 foi validada manualmente no Windows com MT5 reais.
+- A 0.4.11 passa pela suíte automatizada multiplataforma e pelos testes de regras JavaScript; a validação manual final com MT5 reais permanece pendente.
 - Ciclo de cadastro, exclusão, relançamento simultâneo de três MT5 e fluxos foi validado manualmente em 18 de julho de 2026.
 - Os fluxos iniciais de reconciliação de instância ausente foram validados manualmente em 18 de julho de 2026.
-- A adoção de pasta órfã e a reconciliação visual final de perda IPC permanecem pendentes de validação manual antes de integrar a versão.
-- A máquina de estados ampliada permanece pendente de validação manual com MT5 real antes de integrar a versão.
 
 ## Fora do kernel e limitações conhecidas
 

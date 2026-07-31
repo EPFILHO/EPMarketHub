@@ -43,6 +43,9 @@ Não pertencem ao kernel:
 10. O shutdown pode ser chamado mais de uma vez sem repetir efeitos destrutivos.
 11. Um worker ainda vivo impede o fechamento do MT5 que ele supervisiona, evitando reabertura automática após uma parada incompleta.
 12. Eventos tardios do worker não apagam falhas confirmadas de abertura ou fechamento do processo MT5.
+13. Durante encerramento assíncrono, os managers compartilham somente seções curtas protegidas por lock; nenhuma espera de processo mantém esses locks. A GUI usa snapshot para o terminal em parada, mas continua consultando e operando terminais não envolvidos.
+14. Corretora desconectada não encerra uma conexão IPC ainda válida nem transforma indisponibilidade da sessão de negociação em falha de comunicação com o terminal.
+15. Enquanto a leitura estiver ativa, cada novo fechamento externo do MT5 solicita nova reabertura; uma mesma transição não pode disparar processos concorrentes.
 
 ## Política do limite simultâneo
 
@@ -70,6 +73,12 @@ O processo estar aberto não significa que a conexão esteja autenticada. O badg
 do processo nunca é deduzido apenas do estado da biblioteca. Da mesma forma, um
 worker vivo não é considerado conectado sem `account_info`, identidade esperada,
 caminho correto e conexão da corretora confirmados.
+
+`IPC_ATTACHED_STATES` identifica estados em que a biblioteca continua anexada ao
+terminal, embora a leitura ainda não esteja pronta. `broker_disconnected`,
+`waiting_login`, `authentication_failed` e `account_mismatch` preservam esse canal;
+`reconnecting` fica reservado para indisponibilidade real do IPC. Recuperar a
+sessão da corretora não exige reiniciar worker nem terminal.
 
 Uma anomalia `duplicate_process` bloqueia novas leituras, mas mantém disponíveis
 as ações de parada e fechamento necessárias para reconciliar a instância.
@@ -104,8 +113,12 @@ O fechamento do kernel cobre e testa:
 - conta autenticada diferente da identidade cadastrada;
 - biblioteca ligada a outro diretório de terminal;
 - worker vivo sem atividade observável pelo supervisor;
+- silêncio do worker depois de um diagnóstico explícito de corretora desconectada, sem perder a causa já confirmada;
+- corretora desconectada por período prolongado, mantendo o IPC anexado sem escalar tentativas de reconexão;
+- fechamento externo repetido, com uma nova reabertura para cada episódio e sem duplicar o lançamento em andamento;
 - mais de um processo para o mesmo executável;
 - tentativa de fechamento que deixa o processo vivo.
+- parada apenas da leitura sem atribuir falha de fechamento ao processo MT5.
 - evento tardio que tenta apagar uma falha de processo já confirmada.
 
 "Falha segura" significa preservar o último dado válido, não misturar sessões,
@@ -129,3 +142,5 @@ persistência ou limite simultâneo.
 
 O envelope, os comandos, os eventos e a reabertura controlada estão congelados
 como protocolo v1 em `docs/KERNEL_PROTOCOL.md`.
+
+A 0.4.11 altera a coordenação externa das esperas de encerramento e corrige a separação entre IPC e sessão da corretora. O protocolo v1, a propriedade das conexões, a ordem worker → MT5, os timeouts e o escalonamento para `terminate()`/`kill()` permanecem os mesmos.

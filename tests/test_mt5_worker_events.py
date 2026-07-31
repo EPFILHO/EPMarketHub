@@ -1,8 +1,14 @@
 import queue
 from pathlib import Path
 
-from core.models import TerminalProfile
-from core.mt5_worker import _emit, _emit_terminal_restart_required, _terminal_process_running
+from core.models import TerminalConnectionStatus, TerminalProfile
+from core.mt5_worker import (
+    _emit,
+    _emit_terminal_restart_required,
+    _terminal_process_running,
+    mt5_worker_main,
+)
+from core.terminal_states import WorkerConnectionState
 from core.worker_protocol import WORKER_PROTOCOL_VERSION
 
 
@@ -106,3 +112,98 @@ def test_restart_request_exposes_reopening_terminal_state() -> None:
     assert event_queue.payload["event"] == "terminal_restart_required"
     assert event_queue.payload["data"]["state"] == "reopening_terminal"
     assert event_queue.payload["data"]["reconnect_attempts"] == 2
+
+
+def test_broker_disconnection_keeps_ipc_attached_and_recovers(monkeypatch) -> None:
+    class StopEvent:
+        stopped = False
+
+        def is_set(self) -> bool:
+            return self.stopped
+
+        def set(self) -> None:
+            self.stopped = True
+
+    class CommandQueue:
+        @staticmethod
+        def get_nowait():
+            raise queue.Empty
+
+    class EventQueue:
+        def __init__(self) -> None:
+            self.items = []
+
+        def put_nowait(self, payload) -> None:
+            self.items.append(payload)
+
+    stop_event = StopEvent()
+    event_queue = EventQueue()
+
+    class AttachedConnector:
+        def __init__(self, profile) -> None:
+            self.profile = profile
+            self.initialized = False
+            self.initialize_calls = 0
+            self.status_calls = 0
+            self.shutdown_calls = 0
+
+        def initialize(self) -> TerminalConnectionStatus:
+            self.initialize_calls += 1
+            self.initialized = True
+            return self.broker_disconnected()
+
+        def connection_status(self) -> TerminalConnectionStatus:
+            self.status_calls += 1
+            if self.status_calls == 1:
+                return self.broker_disconnected()
+            if self.status_calls >= 3:
+                stop_event.set()
+            return self.connected()
+
+        def shutdown(self) -> None:
+            self.shutdown_calls += 1
+            self.initialized = False
+
+        def broker_disconnected(self) -> TerminalConnectionStatus:
+            return TerminalConnectionStatus(
+                terminal_id=self.profile.id,
+                ok=False,
+                state=WorkerConnectionState.BROKER_DISCONNECTED.value,
+                message="Terminal found without broker connection.",
+                terminal_path=self.profile.terminal_exe,
+            )
+
+        def connected(self) -> TerminalConnectionStatus:
+            return TerminalConnectionStatus(
+                terminal_id=self.profile.id,
+                ok=True,
+                state=WorkerConnectionState.CONNECTED.value,
+                message="Connected.",
+                terminal_path=self.profile.terminal_exe,
+            )
+
+    connector = AttachedConnector(TerminalProfile(id="unused", label="Unused"))
+    monkeypatch.setattr("core.mt5_worker.MT5Connector", lambda profile: connector)
+    monkeypatch.setattr("core.mt5_worker._terminal_process_running", lambda _path: True)
+    monkeypatch.setattr("core.mt5_worker.build_snapshot_from_connector", lambda *_args: {})
+    monkeypatch.setattr("core.mt5_worker.time.sleep", lambda _seconds: None)
+
+    mt5_worker_main(
+        TerminalProfile(
+            id="terminal-fake",
+            label="Fake",
+            terminal_exe="sandbox/terminal64.exe",
+        ).to_dict(),
+        [],
+        CommandQueue(),
+        event_queue,
+        stop_event,
+    )
+
+    states = [item["data"].get("state") for item in event_queue.items]
+    assert connector.initialize_calls == 1
+    assert connector.shutdown_calls == 1
+    assert WorkerConnectionState.BROKER_DISCONNECTED.value in states
+    assert WorkerConnectionState.CONNECTED.value in states
+    assert WorkerConnectionState.RECONNECTING.value not in states
+    assert WorkerConnectionState.ATTENTION_REQUIRED.value not in states
