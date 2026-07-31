@@ -67,8 +67,8 @@
             <span class="theme-toggle-icon" data-theme-icon aria-hidden="true">☾</span>
             <span data-theme-label>Tema escuro</span>
           </button>
-          <div class="status-pill" id="workersStatus">Leituras: 0 ativas</div>
-          <div class="status-pill" id="bridgeStatus">Conectando à ponte Python...</div>
+          <div class="status-pill" id="workersStatus" role="status" aria-live="polite">Leituras: 0 ativas</div>
+          <div class="status-pill" id="bridgeStatus" role="status" aria-live="polite">Conectando à ponte Python...</div>
         </div>
       </header>
 
@@ -89,9 +89,9 @@
             <strong id="healthConnected">0</strong>
             <small>Sessões prontas</small>
           </article>
-          <article class="health-metric">
+          <article class="health-metric" id="healthAttentionMetric">
             <span class="health-label">Requer atenção</span>
-            <strong id="healthAttention">0</strong>
+            <strong id="healthAttention" aria-live="polite">0</strong>
             <small>Diagnósticos explícitos</small>
           </article>
         </section>
@@ -105,7 +105,7 @@
               </div>
               <button type="button" data-view-target="terminals">Gerenciar terminais</button>
             </div>
-            <div id="dashboardTerminalHealth" class="dashboard-terminal-list empty">Nenhum terminal cadastrado ainda.</div>
+            <div id="dashboardTerminalHealth" class="dashboard-terminal-list empty" aria-live="polite">Nenhum terminal cadastrado ainda.</div>
           </section>
 
           <div class="dashboard-side-stack">
@@ -339,7 +339,7 @@
     </section>
   </div>
 
-  <div id="toast" class="toast hidden"></div>
+  <div id="toast" class="toast hidden" role="status" aria-live="polite"></div>
   <script src="terminal_presentation.js"></script>
   <script src="app.js"></script>
 </body>

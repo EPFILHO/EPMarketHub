@@ -717,6 +717,9 @@ function renderDashboardHealth() {
   setTextIfChanged(document.getElementById('healthOpen'), summary.open);
   setTextIfChanged(document.getElementById('healthConnected'), summary.connected);
   setTextIfChanged(document.getElementById('healthAttention'), summary.attention);
+  const attentionMetric = document.getElementById('healthAttentionMetric');
+  attentionMetric?.classList.toggle('healthy', summary.attention === 0);
+  attentionMetric?.classList.toggle('attention', summary.attention > 0);
 
   const bridgeCard = document.getElementById('dashboardBridgeCard');
   const bridgeValue = document.getElementById('dashboardBridgeValue');
