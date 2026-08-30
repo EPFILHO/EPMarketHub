@@ -74,9 +74,37 @@ pesquisa inicial e para o Fusion Quant validar o contrato de dados. Uma
 persistência escalável (banco, Parquet, particionamento por data) é
 deliberadamente adiada para uma fatia futura — ver `docs/ROADMAP.md`.
 
-## Fora de escopo nesta fatia
+## Fora de escopo nesta fatia (fatia 1 — features)
 
 Não há, e não deve haver, nesta fatia: classificador de regime, scoring,
 machine learning, banco de dados, UI, QWebChannel, integração com workers
-MT5 ou terminal ao vivo. `market_analytics/` é um pacote Python puro,
-importável e testável isoladamente de `core/` e `gui/`.
+MT5 ou terminal ao vivo. `bars.py`/`config.py`/`features.py`/`pipeline.py`/
+`storage.py` continuam um núcleo Python puro (biblioteca padrão), importável
+e testável isoladamente de `core/` e `gui/`, sem MT5.
+
+## Fundação de backfill histórico (DEV-002, Portão A)
+
+O mesmo pacote `market_analytics/` também contém, desde o DEV-002, a
+fundação de backfill de ticks históricos (`tick_backfill.py`,
+`backfill_writer.py`, `backfill_catalog.py`, `backfill_runner.py`). Ao
+contrário da fatia 1, esses módulos **não são mais dependentes só da
+biblioteca padrão**:
+
+- `backfill_writer.py` é o único módulo que importa `pyarrow` (escrita/
+  leitura de Parquet com compressão Zstandard);
+- `backfill_catalog.py` usa `sqlite3` da biblioteca padrão para o catálogo
+  operacional (jobs, tentativas, estado, contagens, hash, retomada) — nunca
+  guarda ticks brutos;
+- `tick_backfill.py` e `backfill_runner.py` continuam sem MT5/Qt, mas
+  `backfill_runner.py` depende dos dois módulos acima.
+
+`tick_backfill.py`/`backfill_runner.py` reaproveitam deliberadamente
+`tick_diagnostics.py` (`TickWindow`, `TickWindowAccumulator`, `TickRecord`,
+limites de `chunk_seconds`) em vez de duplicar essas regras já validadas.
+Backfill, fluxo ao vivo e diagnóstico de ticks são mutuamente exclusivos no
+mesmo worker — ver `docs/KERNEL_PROTOCOL.md`.
+
+O Portão A implementa e testa contratos, escritor, catálogo e comando/
+eventos com fontes falsas em diretórios temporários; nenhuma coleta real,
+GUI ou integração com `D:\EP\EPMarketHub` acontece nesta fatia — ver
+`docs/work_orders/DEV-002.md`.

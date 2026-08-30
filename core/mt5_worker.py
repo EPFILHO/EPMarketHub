@@ -11,12 +11,23 @@ from typing import Any
 
 import psutil
 
+from market_analytics.backfill_catalog import CatalogStateError, open_catalog
+from market_analytics.backfill_runner import (
+    BackfillSessionResult,
+    BackfillSourceError,
+    advance_backfill_job,
+    interrupt_backfill_job,
+    start_backfill_job,
+)
+from market_analytics.tick_backfill import BackfillSessionRequest, catalog_db_path
 from market_analytics.tick_diagnostics import (
     TickRecord,
+    TickWindow,
     TickWindowAccumulator,
     TickWindowRequest,
 )
 
+from .config import DEFAULT_MARKET_DATA_ROOT
 from .market_snapshot import (
     build_snapshot_from_connector,
     resolve_historical_symbol_alias,
@@ -33,7 +44,7 @@ from .worker_protocol import WorkerEvent, now_iso, valid_worker_command
 
 logger = logging.getLogger(__name__)
 
-LOSSY_EVENT_TYPES = frozenset({"heartbeat", "live_tick", "snapshot"})
+LOSSY_EVENT_TYPES = frozenset({"heartbeat", "live_tick", "snapshot", "backfill_progress"})
 
 
 def _emit(
@@ -218,6 +229,93 @@ def _start_tick_diagnostic(
     return active
 
 
+def _emit_backfill_event(
+    event_queue,
+    profile: TerminalProfile,
+    event_type: str,
+    request_id: str,
+    extra: dict[str, Any] | None = None,
+) -> None:
+    payload: dict[str, Any] = {"request_id": request_id, "pid": os.getpid()}
+    if extra:
+        payload.update(extra)
+    _emit(event_queue, profile.id, event_type, payload)
+
+
+def _emit_backfill_failed(
+    event_queue,
+    profile: TerminalProfile,
+    request_id: str,
+    reason: str,
+    message: str,
+    *,
+    code: int | None = None,
+) -> None:
+    _emit_backfill_event(
+        event_queue, profile, "backfill_failed", request_id, {"reason": reason, "message": message, "code": code}
+    )
+
+
+def _backfill_result_payload(result: BackfillSessionResult) -> dict[str, Any]:
+    """Resumo pequeno de um resultado terminal — nunca inclui ticks brutos."""
+
+    payload: dict[str, Any] = {
+        "state": result.state,
+        "resolved_symbol": result.resolved_symbol,
+    }
+    if result.summary is not None:
+        payload["summary"] = result.summary.to_dict()
+    if result.promoted is not None:
+        payload["file_path"] = str(result.promoted.path)
+        payload["file_size_bytes"] = result.promoted.size_bytes
+        payload["sha256"] = result.promoted.sha256
+        payload["row_count"] = result.promoted.row_count
+    return payload
+
+
+def _make_backfill_fetch_chunk(connector: MT5Connector, resolved_symbol: str, tick_type: str):
+    """Fronteira do worker: busca um chunk e o converte em `TickRecord`.
+
+    Nunca guarda o array bruto além da conversão do chunk corrente. Erros da
+    API/constante viram `BackfillSourceError("mt5_error", ...)`; erros de
+    extração/tipo dos campos viram `BackfillSourceError("malformed_response",
+    ...)` — a mesma separação de causas usada pelo diagnóstico de ticks.
+    """
+
+    def _fetch(chunk: TickWindow) -> list[TickRecord]:
+        try:
+            raw_ticks = connector.copy_ticks_chunk(resolved_symbol, tick_type, chunk.start_utc, chunk.end_utc)
+        except MT5TicksError as exc:
+            raise BackfillSourceError(exc.reason, exc.message, code=exc.code) from exc
+        except Exception as exc:
+            raise BackfillSourceError("mt5_error", str(exc)) from exc
+
+        chunk_start_ms = int(chunk.start_utc.timestamp() * 1000)
+        chunk_end_ms = int(chunk.end_utc.timestamp() * 1000)
+        try:
+            records = [
+                TickRecord(
+                    time=int(row["time"]),
+                    time_msc=int(row["time_msc"]),
+                    bid=float(row["bid"]),
+                    ask=float(row["ask"]),
+                    last=float(row["last"]),
+                    volume=float(row["volume"]),
+                    volume_real=float(row["volume_real"]),
+                    flags=int(row["flags"]),
+                )
+                for row in raw_ticks
+                if chunk_start_ms <= int(row["time_msc"]) < chunk_end_ms
+            ]
+        except Exception as exc:
+            raise BackfillSourceError(
+                "malformed_response", f"Retorno malformado de copy_ticks_range: {exc}"
+            ) from exc
+        return records
+
+    return _fetch
+
+
 def _advance_tick_diagnostic(
     event_queue,
     profile: TerminalProfile,
@@ -333,12 +431,19 @@ def mt5_worker_main(
     live_poll_seconds: float = 0.20,
     reconnect_seconds: float = 5.0,
     heartbeat_seconds: float = 2.0,
+    backfill_data_root: str | Path | None = None,
 ) -> None:
     """Processo persistente que possui uma única conexão MetaTrader5.
 
     Além dos snapshots consolidados, a baseline atual aceita assinaturas de fluxo ao
     vivo. Cada assinatura consulta um ativo no processo proprietário daquele
     terminal, sem alternar ``initialize`` entre terminais.
+
+    ``backfill_data_root`` (DEV-002) é a raiz onde o backfill grava Parquet e
+    o catálogo SQLite; por padrão é `core.config.DEFAULT_MARKET_DATA_ROOT`.
+    O catálogo só é aberto sob demanda, na primeira solicitação de backfill
+    aceita — um worker que nunca recebe ``start_backfill`` nunca toca esse
+    diretório.
     """
 
     profile = TerminalProfile.from_dict(profile_data)
@@ -361,6 +466,12 @@ def mt5_worker_main(
 
     # Diagnóstico de cobertura de ticks ativo (no máximo um por worker).
     active_tick_diagnostic: dict[str, Any] | None = None
+
+    # Backfill histórico ativo (no máximo um por worker). O catálogo SQLite
+    # só é aberto na primeira solicitação aceita (ver docstring da função).
+    active_backfill: dict[str, Any] | None = None
+    backfill_data_root_path = Path(backfill_data_root) if backfill_data_root else Path(DEFAULT_MARKET_DATA_ROOT)
+    backfill_catalog_conn = None
 
     _emit(
         event_queue,
@@ -409,24 +520,41 @@ def mt5_worker_main(
                     slot_id = str(command.get("slot_id", "")).strip()
                     symbol_spec = command.get("symbol") if isinstance(command.get("symbol"), dict) else {}
                     if slot_id and symbol_spec:
-                        live_streams[slot_id] = {
-                            "symbol_spec": symbol_spec,
-                            "resolved_symbol": None,
-                            "last_signature": None,
-                            "poll_sequence": 0,
-                            "tick_sequence": 0,
-                            "last_status": None,
-                        }
-                        next_live_poll = 0.0
-                        _emit_live_status(
-                            event_queue,
-                            profile,
-                            slot_id,
-                            "configuring",
-                            "Assinatura recebida; resolvendo símbolo no MT5.",
-                            symbol_spec,
-                            connected=connector.initialized,
-                        )
+                        if active_backfill is not None:
+                            # DEV-002 (Portão A, correção de auditoria): backfill e
+                            # fluxo ao vivo não podem se sobrepor no mesmo worker,
+                            # em nenhuma ordem. A recusa é um evento específico
+                            # deste slot; nunca contamina WorkerState nem cria a
+                            # assinatura.
+                            _emit_live_status(
+                                event_queue,
+                                profile,
+                                slot_id,
+                                "rejected_backfill_active",
+                                "Já existe um backfill em andamento neste worker; "
+                                "pare-o antes de iniciar um fluxo ao vivo.",
+                                symbol_spec,
+                                connected=connector.initialized,
+                            )
+                        else:
+                            live_streams[slot_id] = {
+                                "symbol_spec": symbol_spec,
+                                "resolved_symbol": None,
+                                "last_signature": None,
+                                "poll_sequence": 0,
+                                "tick_sequence": 0,
+                                "last_status": None,
+                            }
+                            next_live_poll = 0.0
+                            _emit_live_status(
+                                event_queue,
+                                profile,
+                                slot_id,
+                                "configuring",
+                                "Assinatura recebida; resolvendo símbolo no MT5.",
+                                symbol_spec,
+                                connected=connector.initialized,
+                            )
                 elif action == "clear_live_stream":
                     slot_id = str(command.get("slot_id", "")).strip()
                     stream = live_streams.pop(slot_id, None)
@@ -468,7 +596,19 @@ def mt5_worker_main(
                         active_request = (
                             active_tick_diagnostic["request"] if active_tick_diagnostic else None
                         )
-                        if active_request and active_request.request_id == request.request_id:
+                        if active_backfill is not None:
+                            # DEV-002 (Portão A, correção de auditoria): backfill e
+                            # diagnóstico não podem se sobrepor no mesmo worker,
+                            # em nenhuma ordem.
+                            _emit_tick_diagnostic_failed(
+                                event_queue,
+                                profile,
+                                request.request_id,
+                                "backfill_active",
+                                "Já existe um backfill em andamento neste worker; "
+                                "pare-o antes de iniciar um diagnóstico.",
+                            )
+                        elif active_request and active_request.request_id == request.request_id:
                             if active_request.fingerprint() != request.fingerprint():
                                 _emit_tick_diagnostic_failed(
                                     event_queue,
@@ -504,6 +644,144 @@ def mt5_worker_main(
                             active_tick_diagnostic = _start_tick_diagnostic(
                                 event_queue, profile, request, available_symbol_states
                             )
+                elif action == "start_backfill":
+                    payload = command.get("request")
+                    payload = payload if isinstance(payload, dict) else {}
+                    request_id = str(payload.get("request_id", "")).strip()
+                    try:
+                        backfill_request = BackfillSessionRequest.from_dict(payload)
+                    except (ValueError, KeyError, TypeError) as exc:
+                        _emit_backfill_failed(event_queue, profile, request_id, "invalid_request", str(exc))
+                    else:
+                        active_backfill_request = (
+                            active_backfill["request"] if active_backfill else None
+                        )
+                        if active_backfill_request and active_backfill_request.request_id == backfill_request.request_id:
+                            if active_backfill_request.fingerprint() != backfill_request.fingerprint():
+                                _emit_backfill_failed(
+                                    event_queue,
+                                    profile,
+                                    backfill_request.request_id,
+                                    "request_id_conflict",
+                                    "Este request_id já está em execução com parâmetros diferentes.",
+                                )
+                            # Mesmo request_id e mesma impressão: idempotente, nada a fazer.
+                        elif active_backfill:
+                            _emit_backfill_failed(
+                                event_queue,
+                                profile,
+                                backfill_request.request_id,
+                                "backfill_busy",
+                                "Já existe um backfill em andamento neste worker.",
+                            )
+                        elif live_streams:
+                            _emit_backfill_failed(
+                                event_queue,
+                                profile,
+                                backfill_request.request_id,
+                                "live_stream_active",
+                                "Pare o(s) fluxo(s) ao vivo deste terminal antes de iniciar um backfill.",
+                            )
+                        elif active_tick_diagnostic:
+                            # DEV-002 (Portão A, correção de auditoria): backfill e
+                            # diagnóstico não podem se sobrepor no mesmo worker,
+                            # em nenhuma ordem.
+                            _emit_backfill_failed(
+                                event_queue,
+                                profile,
+                                backfill_request.request_id,
+                                "diagnostic_active",
+                                "Já existe um diagnóstico de ticks em andamento neste worker; "
+                                "aguarde a conclusão antes de iniciar um backfill.",
+                            )
+                        elif not (
+                            connector.initialized
+                            and last_state == WorkerConnectionState.CONNECTED.value
+                        ):
+                            _emit_backfill_failed(
+                                event_queue,
+                                profile,
+                                backfill_request.request_id,
+                                "terminal_disconnected",
+                                "Terminal não está conectado; backfill não iniciado.",
+                            )
+                        else:
+                            if not available_symbol_states or now - available_symbols_updated >= 30.0:
+                                available_symbol_states = connector.list_symbol_states()
+                                available_symbols_updated = now
+                            resolved_symbol = resolve_historical_symbol_alias(
+                                list(backfill_request.aliases), set(available_symbol_states)
+                            )
+                            if not resolved_symbol:
+                                _emit_backfill_failed(
+                                    event_queue,
+                                    profile,
+                                    backfill_request.request_id,
+                                    "symbol_not_found",
+                                    "Nenhum alias adequado deste ativo foi encontrado/listado neste MT5.",
+                                )
+                            else:
+                                if backfill_catalog_conn is None:
+                                    try:
+                                        backfill_catalog_conn = open_catalog(
+                                            catalog_db_path(backfill_data_root_path)
+                                        )
+                                    except CatalogStateError as exc:
+                                        _emit_backfill_failed(
+                                            event_queue,
+                                            profile,
+                                            backfill_request.request_id,
+                                            "catalog_error",
+                                            f"Falha ao abrir o catálogo de backfill: {exc}",
+                                        )
+                                if backfill_catalog_conn is not None:
+                                    job, immediate = start_backfill_job(
+                                        conn=backfill_catalog_conn,
+                                        data_root=backfill_data_root_path,
+                                        request=backfill_request,
+                                        resolved_symbol=resolved_symbol,
+                                        fetch_chunk=_make_backfill_fetch_chunk(
+                                            connector, resolved_symbol, backfill_request.tick_type
+                                        ),
+                                    )
+                                    if job is None:
+                                        assert immediate is not None
+                                        _emit_backfill_failed(
+                                            event_queue,
+                                            profile,
+                                            backfill_request.request_id,
+                                            immediate.error_reason or "mt5_error",
+                                            immediate.error_message or "Falha ao iniciar o backfill.",
+                                        )
+                                    else:
+                                        active_backfill = job
+                                        _emit_backfill_event(
+                                            event_queue,
+                                            profile,
+                                            "backfill_accepted",
+                                            backfill_request.request_id,
+                                            {
+                                                "resolved_symbol": resolved_symbol,
+                                                "source_id": backfill_request.source_id,
+                                                "logical_id": backfill_request.logical_id,
+                                                "session_date": backfill_request.session_date.isoformat(),
+                                                "attempt_id": job["attempt_id"],
+                                            },
+                                        )
+                elif action == "stop_backfill":
+                    stop_request_id = str(command.get("request_id", "")).strip()
+                    if active_backfill and active_backfill["request"].request_id == stop_request_id:
+                        stop_result = interrupt_backfill_job(
+                            active_backfill, "Interrompido a pedido do usuário entre chunks."
+                        )
+                        _emit_backfill_event(
+                            event_queue,
+                            profile,
+                            "backfill_interrupted",
+                            stop_request_id,
+                            _backfill_result_payload(stop_result),
+                        )
+                        active_backfill = None
 
             if stop_event.is_set():
                 break
@@ -767,6 +1045,56 @@ def mt5_worker_main(
                     )
                     active_tick_diagnostic = None
 
+            if active_backfill is not None:
+                if connector.initialized and last_state == WorkerConnectionState.CONNECTED.value:
+                    backfill_request: BackfillSessionRequest = active_backfill["request"]
+                    outcome, backfill_result = advance_backfill_job(active_backfill)
+                    if outcome == "progress":
+                        _emit_backfill_event(
+                            event_queue,
+                            profile,
+                            "backfill_progress",
+                            backfill_request.request_id,
+                            {
+                                "resolved_symbol": active_backfill["resolved_symbol"],
+                                "chunk_index": active_backfill["chunk_index"],
+                                "chunk_count": len(active_backfill["chunks"]),
+                            },
+                        )
+                    elif outcome == "failed":
+                        assert backfill_result is not None
+                        _emit_backfill_failed(
+                            event_queue,
+                            profile,
+                            backfill_request.request_id,
+                            backfill_result.error_reason or "mt5_error",
+                            backfill_result.error_message or "Falha no backfill.",
+                            code=backfill_result.error_code,
+                        )
+                        active_backfill = None
+                    else:  # "completed" ou "empty"
+                        assert backfill_result is not None
+                        _emit_backfill_event(
+                            event_queue,
+                            profile,
+                            "backfill_completed",
+                            backfill_request.request_id,
+                            _backfill_result_payload(backfill_result),
+                        )
+                        active_backfill = None
+                else:
+                    interrupted_result = interrupt_backfill_job(
+                        active_backfill, "Conexão perdida durante o backfill."
+                    )
+                    _emit_backfill_event(
+                        event_queue,
+                        profile,
+                        "backfill_interrupted",
+                        active_backfill["request"].request_id,
+                        _backfill_result_payload(interrupted_result),
+                    )
+                    active_backfill = None
+
             if now >= next_heartbeat:
                 status = connector.connection_status() if connector.initialized else None
                 _emit(
@@ -806,6 +1134,20 @@ def mt5_worker_main(
             },
         )
     finally:
+        if active_backfill is not None:
+            # Encerramento gracioso do worker com um backfill em andamento:
+            # descarta o `.partial` e marca a sessão como interrompida, em
+            # vez de deixar o catálogo preso em "running" indefinidamente.
+            try:
+                interrupt_backfill_job(active_backfill, "Worker encerrado durante o backfill.")
+            except Exception:
+                logger.exception("Falha ao interromper o backfill ativo durante o encerramento do worker.")
+            active_backfill = None
+        if backfill_catalog_conn is not None:
+            try:
+                backfill_catalog_conn.close()
+            except Exception:
+                logger.exception("Falha ao fechar a conexão do catálogo de backfill.")
         connector.shutdown()
         _emit(
             event_queue,

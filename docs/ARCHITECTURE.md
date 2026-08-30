@@ -81,3 +81,7 @@ Os registros são gravados em arquivo temporário, sincronizados e promovidos po
 ## Símbolos
 
 `SymbolRegistry` mantém ativos lógicos com aliases. A resolução do símbolo ocorre dentro de cada worker usando metadados do MT5. O critério operacional (snapshot, streaming) prioriza símbolos tradáveis e com cotação válida e recusa candidatos não negociáveis. O diagnóstico de ticks usa uma resolução histórica/de dados separada, que aceita um alias exato listado mesmo sem negociação habilitada (ex.: `WIN$` na Clear); aceitar essa fonte para histórico não a torna negociável nem altera a resolução operacional.
+
+## Backfill histórico (DEV-002, Portão A)
+
+Além do snapshot/streaming/diagnóstico, o worker aceita um comando pequeno de backfill (`start_backfill`/`stop_backfill`) que grava ticks brutos de uma sessão (dia civil) em Parquet fora do repositório e fora de `D:\EP\EPMarketHub`, com um catálogo SQLite de estado/retomada — ver `docs/MARKET_ANALYTICS.md` e `docs/work_orders/DEV-002.md`. Ticks brutos nunca atravessam a fila de eventos; o worker escreve por chunk direto no Parquet e só emite resumos pequenos. Backfill, fluxo ao vivo e diagnóstico de ticks são mutuamente exclusivos no mesmo worker, em qualquer ordem. O Portão A implementa e testa essa fundação com fontes falsas, sem MT5 real, coleta ampla nem GUI; portões seguintes exigem nova aprovação do proprietário.

@@ -8,11 +8,43 @@ biblioteca padrão.
 Fronteira arquitetural: ver `docs/MARKET_ANALYTICS.md`.
 """
 
+from .backfill_catalog import CatalogStateError, new_attempt_id, open_catalog
+from .backfill_runner import (
+    BackfillSessionResult,
+    BackfillSourceError,
+    advance_backfill_job,
+    interrupt_backfill_job,
+    run_session_backfill,
+    start_backfill_job,
+)
+from .backfill_writer import (
+    BackfillWriteError,
+    InspectedFile,
+    PromotedFile,
+    SessionTickWriter,
+    inspect_final_file,
+    recompute_summary_from_file,
+)
 from .bars import Bar, VolumeQuality
 from .config import FeatureConfig
 from .features import FEATURE_SCHEMA_VERSION, FeatureRow
 from .pipeline import compute_feature_rows
 from .storage import load_feature_artifact, save_feature_artifact
+from .tick_backfill import (
+    BACKFILL_COLLECTOR_VERSION,
+    BACKFILL_FAILURE_REASONS,
+    BACKFILL_SESSION_STATES,
+    RAW_SCHEMA_VERSION,
+    SESSION_TIMEZONE,
+    ArtifactIdentity,
+    ArtifactIdentityError,
+    BackfillSessionRequest,
+    SessionWindow,
+    catalog_db_path,
+    raw_partition_dir,
+    session_window_utc,
+    validate_artifact_identity,
+)
 from .tick_diagnostics import (
     CANONICAL_TICK_TYPES,
     EMPTY_REASON_NO_TICKS,
@@ -45,4 +77,32 @@ __all__ = [
     "TickWindowSummary",
     "mt5_tick_type_attr",
     "validate_tick_record",
+    "BACKFILL_COLLECTOR_VERSION",
+    "BACKFILL_FAILURE_REASONS",
+    "BACKFILL_SESSION_STATES",
+    "RAW_SCHEMA_VERSION",
+    "SESSION_TIMEZONE",
+    "BackfillSessionRequest",
+    "SessionWindow",
+    "ArtifactIdentity",
+    "ArtifactIdentityError",
+    "validate_artifact_identity",
+    "catalog_db_path",
+    "raw_partition_dir",
+    "session_window_utc",
+    "BackfillWriteError",
+    "InspectedFile",
+    "PromotedFile",
+    "SessionTickWriter",
+    "inspect_final_file",
+    "recompute_summary_from_file",
+    "CatalogStateError",
+    "new_attempt_id",
+    "open_catalog",
+    "BackfillSessionResult",
+    "BackfillSourceError",
+    "advance_backfill_job",
+    "interrupt_backfill_job",
+    "run_session_backfill",
+    "start_backfill_job",
 ]

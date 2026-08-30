@@ -18,6 +18,8 @@ WORKER_COMMAND_TYPES = frozenset(
         "clear_live_stream",
         "clear_all_live_streams",
         "diagnose_ticks",
+        "start_backfill",
+        "stop_backfill",
     }
 )
 
@@ -36,6 +38,11 @@ WORKER_EVENT_TYPES = frozenset(
         "tick_diagnostic_window_result",
         "tick_diagnostic_completed",
         "tick_diagnostic_failed",
+        "backfill_accepted",
+        "backfill_progress",
+        "backfill_completed",
+        "backfill_failed",
+        "backfill_interrupted",
     }
 )
 

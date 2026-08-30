@@ -10,9 +10,13 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from market_analytics.backfill_catalog import get_session as catalog_get_session
+from market_analytics.backfill_catalog import interrupt_session as catalog_interrupt_session
+from market_analytics.backfill_catalog import open_catalog
+from market_analytics.tick_backfill import BackfillSessionRequest, catalog_db_path
 from market_analytics.tick_diagnostics import TickWindowRequest
 
-from .config import MAX_ACTIVE_TERMINALS
+from .config import DEFAULT_MARKET_DATA_ROOT, MAX_ACTIVE_TERMINALS
 from .models import SymbolDefinition, TerminalProfile
 from .mt5_worker import mt5_worker_main
 from .terminal_states import (
@@ -42,12 +46,14 @@ class MT5WorkerManager:
         live_poll_seconds: float = 0.20,
         max_workers: int = MAX_ACTIVE_TERMINALS,
         unresponsive_seconds: float = WORKER_UNRESPONSIVE_SECONDS,
+        backfill_data_root: str | Path | None = None,
     ):
         self.context = mp.get_context("spawn")
         self.refresh_seconds = refresh_seconds
         self.live_poll_seconds = live_poll_seconds
         self.max_workers = max(1, int(max_workers))
         self.unresponsive_seconds = max(1.0, float(unresponsive_seconds))
+        self.backfill_data_root = Path(backfill_data_root) if backfill_data_root else Path(DEFAULT_MARKET_DATA_ROOT)
         self.event_queue = self.context.Queue(maxsize=2048)
         self._handles: dict[str, WorkerHandle] = {}
         self._states: dict[str, WorkerState] = {}
@@ -57,6 +63,8 @@ class MT5WorkerManager:
         self._live_statuses: dict[str, dict[str, Any]] = {}
         self._last_activity: dict[str, float] = {}
         self._tick_diagnostics: dict[str, dict[str, Any]] = {}
+        self._backfills: dict[str, dict[str, Any]] = {}
+        self._backfill_catalog_conn = None
         self._shutdown = False
         self._lock = threading.RLock()
         self._stopping_terminal_ids: set[str] = set()
@@ -109,6 +117,7 @@ class MT5WorkerManager:
                 self.refresh_seconds,
                 self.live_poll_seconds,
             ),
+            kwargs={"backfill_data_root": str(self.backfill_data_root)},
             daemon=True,
         )
         try:
@@ -268,6 +277,12 @@ class MT5WorkerManager:
             self.event_queue.join_thread()
         except Exception:
             logger.exception("Falha ao fechar a fila de eventos dos workers")
+        if self._backfill_catalog_conn is not None:
+            try:
+                self._backfill_catalog_conn.close()
+            except Exception:
+                logger.exception("Falha ao fechar a conexão do catálogo de backfill do manager")
+            self._backfill_catalog_conn = None
         return True
 
     def active_count(self) -> int:
@@ -299,6 +314,13 @@ class MT5WorkerManager:
             ]
             for request_id in stale_requests:
                 self._tick_diagnostics.pop(request_id, None)
+            stale_backfills = [
+                request_id
+                for request_id, entry in self._backfills.items()
+                if entry.get("terminal_id") == terminal_id
+            ]
+            for request_id in stale_backfills:
+                self._backfills.pop(request_id, None)
         self.clear_live_streams_for_terminal(terminal_id)
 
     def request_snapshot(self, terminal_id: str) -> tuple[bool, str]:
@@ -450,6 +472,83 @@ class MT5WorkerManager:
     def tick_diagnostics_payload(self) -> dict[str, dict[str, Any]]:
         with self._lock:
             return {request_id: dict(entry) for request_id, entry in self._tick_diagnostics.items()}
+
+    def request_backfill(self, terminal_id: str, request: BackfillSessionRequest) -> tuple[bool, str]:
+        """Encaminha um backfill de sessão ao worker dono da conexão.
+
+        Mesma identidade imutável de `request_tick_diagnostic`: o par
+        (`terminal_id`, impressão digital canônica) é reservado numa única
+        seção crítica, e o mesmo `request_id` reaproveitado em outro
+        terminal (mesmo com payload idêntico) é `request_id_conflict`.
+        """
+
+        fingerprint = request.fingerprint()
+        with self._lock:
+            existing = self._backfills.get(request.request_id)
+            if existing is not None:
+                if existing["terminal_id"] != terminal_id or existing["fingerprint"] != fingerprint:
+                    return (
+                        False,
+                        "request_id já usado em outro terminal ou com parâmetros diferentes "
+                        "(request_id_conflict).",
+                    )
+                return True, "Backfill já registrado; reaproveitando o estado existente."
+
+            if not self.is_running(terminal_id):
+                return False, "Inicie a leitura persistente deste terminal antes do backfill."
+
+            self._backfills[request.request_id] = {
+                "terminal_id": terminal_id,
+                "fingerprint": fingerprint,
+                "source_id": request.source_id,
+                "logical_id": request.logical_id,
+                "session_date": request.session_date,
+                "state": "pending",
+                "pid": None,
+                "attempt_id": None,
+                "resolved_symbol": None,
+                "result": None,
+                "error": None,
+                "updated_at": now_iso(),
+            }
+
+        sent, message = self._send_command(
+            terminal_id,
+            worker_command("start_backfill", request=request.to_dict()),
+            "Backfill de sessão solicitado.",
+        )
+        if not sent:
+            with self._lock:
+                current = self._backfills.get(request.request_id)
+                if (
+                    current is not None
+                    and current["terminal_id"] == terminal_id
+                    and current["fingerprint"] == fingerprint
+                ):
+                    self._backfills.pop(request.request_id, None)
+        return sent, message
+
+    def stop_backfill(self, request_id: str) -> tuple[bool, str]:
+        with self._lock:
+            entry = self._backfills.get(request_id)
+        if entry is None:
+            return False, "Este backfill não está registrado."
+        if entry["state"] not in {"pending", "running"}:
+            return False, "Este backfill já terminou."
+        return self._send_command(
+            str(entry["terminal_id"]),
+            worker_command("stop_backfill", request_id=request_id),
+            "Parada do backfill solicitada.",
+        )
+
+    def backfill_status(self, request_id: str) -> dict[str, Any] | None:
+        with self._lock:
+            entry = self._backfills.get(request_id)
+            return dict(entry) if entry is not None else None
+
+    def backfills_payload(self) -> dict[str, dict[str, Any]]:
+        with self._lock:
+            return {request_id: dict(entry) for request_id, entry in self._backfills.items()}
 
     def _restore_live_streams(self, terminal_id: str) -> None:
         with self._lock:
@@ -633,6 +732,42 @@ class MT5WorkerManager:
                     "message": data.get("message"),
                     "code": data.get("code"),
                 }
+        elif event_type in {
+            "backfill_accepted",
+            "backfill_progress",
+            "backfill_completed",
+            "backfill_failed",
+            "backfill_interrupted",
+        }:
+            # Estado de job de backfill, nunca misturado ao WorkerState de
+            # conexão do terminal — mesmo princípio do diagnóstico de ticks.
+            request_id = str(data.get("request_id", ""))
+            entry = self._backfills.get(request_id)
+            if not entry or entry.get("terminal_id") != terminal_id:
+                return False
+            entry["pid"] = data.get("pid", entry.get("pid"))
+            entry["updated_at"] = now_iso()
+            if event_type == "backfill_accepted":
+                entry["state"] = "running"
+                entry["resolved_symbol"] = data.get("resolved_symbol")
+                entry["attempt_id"] = data.get("attempt_id")
+            elif event_type == "backfill_progress":
+                entry["resolved_symbol"] = data.get("resolved_symbol", entry.get("resolved_symbol"))
+                entry["chunk_index"] = data.get("chunk_index")
+                entry["chunk_count"] = data.get("chunk_count")
+            elif event_type == "backfill_completed":
+                entry["state"] = data.get("state", "completed")
+                entry["result"] = data
+            elif event_type == "backfill_interrupted":
+                entry["state"] = "interrupted"
+                entry["result"] = data
+            else:
+                entry["state"] = "failed"
+                entry["error"] = {
+                    "reason": data.get("reason"),
+                    "message": data.get("message"),
+                    "code": data.get("code"),
+                }
         else:
             state.update(data)
 
@@ -661,6 +796,121 @@ class MT5WorkerManager:
                     entry["error"] = {"reason": "worker_unavailable", "message": message}
                     entry["updated_at"] = now_iso()
 
+    def _backfill_catalog_conn_for_recovery(self):
+        """Conexão do manager ao mesmo catálogo SQLite dos workers, sob demanda.
+
+        Só é aberta quando um worker morre/fica sem resposta com um backfill
+        pendente/em execução — nunca no caminho comum de leitura ao vivo, e
+        nunca antes de qualquer backfill ter sido solicitado.
+        """
+
+        if self._backfill_catalog_conn is None:
+            self._backfill_catalog_conn = open_catalog(catalog_db_path(self.backfill_data_root))
+        return self._backfill_catalog_conn
+
+    def _interrupt_backfills_for_terminal(self, terminal_id: str, message: str) -> None:
+        """Marca backfills pendentes/em execução como interrompidos e libera
+        a propriedade no catálogo — **só deve ser chamado com a morte do
+        worker já confirmada** (`handle.process.is_alive()` falso), nunca
+        por ausência temporária de heartbeat com o processo ainda vivo (ver
+        `_detect_unresponsive_workers`, correção da quarta auditoria, item
+        2): liberar a propriedade durante uma chamada MT5 síncrona longa
+        deixaria duas tentativas escrevendo a mesma sessão ao mesmo tempo.
+
+        Além do estado em memória (bookkeeping do manager), libera a sessão
+        no catálogo SQLite persistente: o processo do worker morreu com o
+        `SessionTickWriter` e a conexão SQLite dele, então só o manager pode
+        tirar a linha de `"running"` — sem isso, uma nova tentativa ficaria
+        presa para sempre em `backfill_busy`.
+        """
+
+        with self._lock:
+            stuck = [
+                entry
+                for entry in self._backfills.values()
+                if entry.get("terminal_id") == terminal_id and entry.get("state") in {"pending", "running"}
+            ]
+            for entry in stuck:
+                entry["state"] = "interrupted"
+                entry["error"] = {"reason": "worker_unavailable", "message": message}
+                entry["updated_at"] = now_iso()
+        for entry in stuck:
+            source_id = entry.get("source_id")
+            logical_id = entry.get("logical_id")
+            session_date = entry.get("session_date")
+            attempt_id = entry.get("attempt_id")
+            if not source_id or not logical_id or session_date is None:
+                continue
+            if not attempt_id:
+                # Evento de aceite perdido (correção da quarta auditoria,
+                # item 3): o worker morreu depois de begin_attempt, mas
+                # antes do evento `backfill_accepted` chegar a este
+                # bookkeeping em memória — o manager nunca soube o
+                # attempt_id. Como a morte já está confirmada, consulta a
+                # sessão correspondente diretamente no catálogo e recupera o
+                # attempt_id dali: só ele sabe se uma tentativa está mesmo
+                # `running` e qual é. `interrupt_session` ainda exige esse
+                # mesmo attempt_id casar com o gravado na linha antes de
+                # aplicar a transição — nunca toca a tentativa de outro
+                # worker que porventura já tenha assumido a sessão.
+                #
+                # Antes disso, uma checagem de ambiguidade: se OUTRO pedido
+                # rastreado por este mesmo manager (outro terminal_id) ainda
+                # reivindica ativamente a mesma sessão (pending/running), não
+                # há como provar com segurança que a linha "running" do
+                # catálogo pertence a ESTE worker morto, e não ao outro —
+                # "não toque tentativa de outro worker" se aplica também
+                # quando a identidade não pode ser desambiguada, não só
+                # quando ela é conhecida e diferente. Melhor deixar a linha
+                # como está (recuperável depois) do que arriscar interromper
+                # a tentativa real de outro worker.
+                with self._lock:
+                    ambiguous_owner = any(
+                        other is not entry
+                        and other.get("source_id") == source_id
+                        and other.get("logical_id") == logical_id
+                        and other.get("session_date") == session_date
+                        and other.get("state") in {"pending", "running"}
+                        for other in self._backfills.values()
+                    )
+                if ambiguous_owner:
+                    continue
+                try:
+                    conn = self._backfill_catalog_conn_for_recovery()
+                    catalog_row = catalog_get_session(
+                        conn, source_id=source_id, logical_id=logical_id, session_date=session_date
+                    )
+                except Exception:
+                    logger.exception(
+                        "Falha ao consultar no catálogo a sessão de um evento de aceite perdido: %s/%s/%s",
+                        source_id,
+                        logical_id,
+                        session_date,
+                    )
+                    continue
+                if catalog_row is None or catalog_row.get("state") != "running":
+                    continue
+                attempt_id = catalog_row.get("attempt_id")
+                if not attempt_id:
+                    continue
+            try:
+                conn = self._backfill_catalog_conn_for_recovery()
+                catalog_interrupt_session(
+                    conn,
+                    source_id=source_id,
+                    logical_id=logical_id,
+                    session_date=session_date,
+                    attempt_id=attempt_id,
+                    message=message,
+                )
+            except Exception:
+                logger.exception(
+                    "Falha ao liberar no catálogo a sessão de backfill de um worker morto: %s/%s/%s",
+                    source_id,
+                    logical_id,
+                    session_date,
+                )
+
     def _detect_dead_workers(self, events: list[dict[str, Any]]) -> None:
         with self._lock:
             handles = list(self._handles.items())
@@ -669,6 +919,9 @@ class MT5WorkerManager:
                 continue
             self._interrupt_tick_diagnostics_for_terminal(
                 terminal_id, "Worker terminou antes da conclusão do diagnóstico."
+            )
+            self._interrupt_backfills_for_terminal(
+                terminal_id, "Worker terminou antes da conclusão do backfill."
             )
             with self._lock:
                 state = self._states.setdefault(terminal_id, WorkerState(terminal_id=terminal_id))
@@ -747,6 +1000,13 @@ class MT5WorkerManager:
             self._interrupt_tick_diagnostics_for_terminal(
                 terminal_id, "Worker sem resposta durante o diagnóstico."
             )
+            # Correção da quarta auditoria, item 2: ausência temporária de
+            # heartbeat com o processo ainda vivo NUNCA libera a propriedade
+            # do catálogo de backfill — isso corromperia a tentativa ativa
+            # se ela só estiver presa numa chamada MT5 síncrona longa. A UI
+            # já foi marcada `UNRESPONSIVE` acima; a propriedade do catálogo
+            # só é liberada em `_detect_dead_workers`, com a morte do
+            # processo comprovada por `handle.process.is_alive()`.
 
     def _cleanup_handle(self, terminal_id: str, handle: WorkerHandle) -> None:
         with self._lock:

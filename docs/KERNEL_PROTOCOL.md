@@ -55,6 +55,8 @@ versão do protocolo e testes de compatibilidade.
 | `clear_live_stream` | `slot_id` | remove um fluxo |
 | `clear_all_live_streams` | nenhum | remove todos os fluxos daquele worker |
 | `diagnose_ticks` | `request` | executa um diagnóstico somente leitura de cobertura de ticks |
+| `start_backfill` | `request` | inicia o backfill histórico de uma sessão (dia civil) em Parquet fora do repositório (DEV-002, Portão A) |
+| `stop_backfill` | `request_id` | interrompe entre chunks o backfill ativo com este `request_id` |
 
 ## Eventos aceitos
 
@@ -73,13 +75,32 @@ versão do protocolo e testes de compatibilidade.
 | `tick_diagnostic_window_result` | resumo pequeno de uma janela do diagnóstico |
 | `tick_diagnostic_completed` | todas as janelas do diagnóstico foram concluídas |
 | `tick_diagnostic_failed` | falha estruturada do diagnóstico, isolada do estado de conexão |
+| `backfill_accepted` | backfill de sessão aceito e símbolo resolvido pela resolução histórica/de dados |
+| `backfill_progress` | avanço de um chunk (renovável, descartável sob congestionamento como `heartbeat`/`live_tick`) |
+| `backfill_completed` | sessão concluída (`state` interno `completed` ou `empty`), com resumo, hash e caminho do Parquet — nunca ticks brutos |
+| `backfill_failed` | falha estruturada do backfill, isolada do estado de conexão |
+| `backfill_interrupted` | backfill interrompido entre chunks (parada explícita ou perda de conexão), sessão preservada como recuperável |
 
-Os quatro eventos de diagnóstico de ticks e o comando `diagnose_ticks` são
-extensões compatíveis do protocolo v1: o envelope e os campos obrigatórios
-não mudam. Eles carregam apenas um resumo pequeno correlacionado por
-`request_id` (nunca ticks brutos) e não alimentam o vocabulário de
-`data.state` do worker/terminal — uma falha de diagnóstico nunca é
-reportada como `error` genérico nem contamina o estado de conexão.
+Os quatro eventos de diagnóstico de ticks e o comando `diagnose_ticks`, e os
+cinco eventos de backfill e os comandos `start_backfill`/`stop_backfill`
+(DEV-002, Portão A), são extensões compatíveis do protocolo v1: o envelope e
+os campos obrigatórios não mudam. Eles carregam apenas um resumo pequeno
+correlacionado por `request_id` (nunca ticks brutos) e não alimentam o
+vocabulário de `data.state` do worker/terminal — uma falha de diagnóstico ou
+de backfill nunca é reportada como `error` genérico nem contamina o estado
+de conexão. Backfill, fluxo ao vivo e diagnóstico de ticks são mutuamente
+exclusivos no mesmo worker, em qualquer ordem: uma solicitação recusada por
+sobreposição produz um evento específico daquela funcionalidade
+(`backfill_failed`/`tick_diagnostic_failed` com o motivo, ou `live_status`
+com um estado de rejeição), nunca um `error` genérico.
+
+O backfill (DEV-002) grava Parquet e um catálogo SQLite fora do repositório
+e fora de `D:\EP\EPMarketHub` (raiz configurável, padrão
+`core.config.DEFAULT_MARKET_DATA_ROOT`); o worker só toca esse diretório na
+primeira solicitação `start_backfill` aceita. `market_analytics` deixou de
+depender só da biblioteca padrão nessa fatia: o escritor Parquet usa
+`pyarrow` e o catálogo usa `sqlite3` (biblioteca padrão) — ver
+`docs/MARKET_ANALYTICS.md`.
 
 O PID identifica a execução proprietária. O supervisor rejeita eventos de uma
 execução anterior antes que alcancem a bridge.

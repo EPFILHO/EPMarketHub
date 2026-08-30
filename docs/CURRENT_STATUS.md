@@ -81,3 +81,4 @@ A baseline `v0.4.11-baseline` preserva o kernel 0.4.10 validado e mantém fora d
 - Processos reais, QWebEngine e a biblioteca `MetaTrader5` não são exercitados pela suíte multiplataforma.
 - Splashscreen e identificação externa das janelas MT5 permanecem como evoluções futuras.
 - O Dashboard agora apresenta as cotações reais disponíveis; sem dados recebidos, apresenta estado vazio. A saúde operacional ficou secundária e a bancada visual de três fluxos foi preservada em **Diagnóstico**.
+- DEV-002 Portão A implementou e testou (sem MT5 real) a fundação de backfill histórico de ticks — escritor Parquet, catálogo SQLite, comando/eventos do worker e reconciliação arquivo↔catálogo. Nenhuma coleta real, GUI nem integração com `D:\EP\EPMarketHub` foi feita; os portões seguintes exigem nova aprovação do proprietário — ver `docs/work_orders/DEV-002.md` e `docs/MARKET_ANALYTICS.md`.

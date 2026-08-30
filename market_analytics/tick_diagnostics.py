@@ -51,6 +51,7 @@ TickDiagnosticFailureReason = Literal[
     "request_id_conflict",
     "diagnostic_busy",
     "worker_unavailable",
+    "backfill_active",
 ]
 
 FAILURE_REASONS: frozenset[str] = frozenset(
@@ -63,6 +64,10 @@ FAILURE_REASONS: frozenset[str] = frozenset(
         "request_id_conflict",
         "diagnostic_busy",
         "worker_unavailable",
+        # DEV-002 (Portão A, correção de auditoria): backfill e diagnóstico
+        # de ticks não podem rodar simultaneamente no mesmo worker, em
+        # nenhuma ordem — ver docs/work_orders/DEV-002.md.
+        "backfill_active",
     }
 )
 
