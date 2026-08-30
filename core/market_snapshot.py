@@ -81,6 +81,76 @@ def resolve_symbol_aliases(
     return None
 
 
+def resolve_historical_symbol_alias(aliases: list[str], available: set[str]) -> str | None:
+    """Resolve o melhor alias listado para diagnóstico histórico/de dados.
+
+    Ao contrário de `resolve_symbol_aliases`, esta resolução nunca exige
+    `trade_mode` habilitado: aceita qualquer alias exato que o terminal
+    liste em `symbols_get()`, mesmo com negociação desativada (caso da
+    Clear com `WIN$`). A prioridade declarada dos aliases é preservada tal
+    como cadastrada — um alias exato mais cedo na lista vence mesmo que um
+    alias posterior seja negociável — e correspondência exata continua
+    tendo precedência sobre padrão, para nunca escolher silenciosamente um
+    contrato arbitrário via curinga amplo.
+
+    Na ausência de qualquer correspondência exata, um resultado por curinga
+    só é aceito quando exatamente um símbolo distinto casar com os padrões
+    cadastrados. Dois ou mais nomes distintos encontrados apenas por curinga
+    são ambíguos e retornam ``None`` em vez de um desempate alfabético
+    silencioso (correção COR-DEV-002, auditoria da primeira entrega).
+
+    Aceitar um símbolo por esta via não o torna negociável: o resolvedor
+    operacional (`resolve_symbol_aliases`), usado em snapshot e streaming,
+    continua recusando candidatos não negociáveis sem nenhuma alteração de
+    comportamento.
+    """
+
+    cleaned = [str(alias).strip() for alias in aliases if str(alias).strip()]
+    lower_map = {name.casefold(): name for name in available}
+    candidates: dict[str, tuple[int, int]] = {}
+
+    def register(name: str, match_kind: int, alias_index: int) -> None:
+        current = candidates.get(name)
+        rank = (match_kind, alias_index)
+        if current is None or rank < current:
+            candidates[name] = rank
+
+    for alias_index, alias in enumerate(cleaned):
+        wildcard = "*" in alias or "?" in alias
+        if not wildcard:
+            if alias in available:
+                register(alias, 0, alias_index)
+            found = lower_map.get(alias.casefold())
+            if found:
+                register(found, 1, alias_index)
+            continue
+
+        pattern = alias.casefold()
+        for name in available:
+            if fnmatchcase(name.casefold(), pattern):
+                register(name, 2, alias_index)
+
+    if not candidates:
+        return None
+
+    # Correspondência exata (kind 0/1) sempre tem precedência declarada sobre
+    # qualquer padrão, mesmo que o mesmo ou outro alias também case por
+    # curinga com vários nomes.
+    exact_candidates = {name: rank for name, rank in candidates.items() if rank[0] < 2}
+    if exact_candidates:
+        ordered = sorted(exact_candidates.items(), key=lambda item: (*item[1], item[0].casefold()))
+        return ordered[0][0]
+
+    # Sem correspondência exata: um curinga só resolve quando aponta para um
+    # único símbolo distinto e inequívoco. Dois ou mais nomes distintos não
+    # podem ser desempatados alfabeticamente — isso escolheria em silêncio um
+    # contrato arbitrário entre padrões amplos.
+    wildcard_names = set(candidates)
+    if len(wildcard_names) == 1:
+        return next(iter(wildcard_names))
+    return None
+
+
 def build_snapshot_from_connector(
     profile: TerminalProfile,
     connector: MT5Connector,

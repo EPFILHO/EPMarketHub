@@ -69,7 +69,7 @@ versão do protocolo e testes de compatibilidade.
 | `terminal_restart_required` | worker vivo detectou seu MT5 fechado |
 | `error` | falha não recuperada do worker |
 | `stopped` | worker encerrado |
-| `tick_diagnostic_accepted` | diagnóstico de ticks aceito e símbolo resolvido |
+| `tick_diagnostic_accepted` | diagnóstico de ticks aceito e símbolo resolvido pela resolução histórica/de dados (aceita alias exato listado mesmo não negociável; não usa nem altera o resolvedor operacional) |
 | `tick_diagnostic_window_result` | resumo pequeno de uma janela do diagnóstico |
 | `tick_diagnostic_completed` | todas as janelas do diagnóstico foram concluídas |
 | `tick_diagnostic_failed` | falha estruturada do diagnóstico, isolada do estado de conexão |

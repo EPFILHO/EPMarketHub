@@ -17,7 +17,11 @@ from market_analytics.tick_diagnostics import (
     TickWindowRequest,
 )
 
-from .market_snapshot import build_snapshot_from_connector, resolve_symbol_aliases
+from .market_snapshot import (
+    build_snapshot_from_connector,
+    resolve_historical_symbol_alias,
+    resolve_symbol_aliases,
+)
 from .models import SymbolDefinition, TerminalProfile
 from .mt5_connector import MT5Connector, MT5TicksError
 from .terminal_states import (
@@ -176,8 +180,12 @@ def _start_tick_diagnostic(
     request: TickWindowRequest,
     available_symbol_states: dict[str, dict[str, Any]],
 ) -> dict[str, Any] | None:
-    resolved_symbol = resolve_symbol_aliases(
-        list(request.aliases), set(available_symbol_states), available_symbol_states
+    # Resolução histórica/de dados (COR-DEV-002): diferente do resolvedor
+    # operacional usado por snapshot/streaming, aceita um alias exato listado
+    # no terminal mesmo com negociação desativada (ex.: WIN$ na Clear).
+    # Aceitar essa fonte para diagnóstico não a torna negociável.
+    resolved_symbol = resolve_historical_symbol_alias(
+        list(request.aliases), set(available_symbol_states)
     )
     if not resolved_symbol:
         _emit_tick_diagnostic_failed(
@@ -185,7 +193,7 @@ def _start_tick_diagnostic(
             profile,
             request.request_id,
             "symbol_not_found",
-            "Nenhum alias ativo/tradável deste ativo foi encontrado neste MT5.",
+            "Nenhum alias adequado deste ativo foi encontrado/listado neste MT5.",
         )
         return None
     active: dict[str, Any] = {

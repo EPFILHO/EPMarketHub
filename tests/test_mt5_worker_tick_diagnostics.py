@@ -202,8 +202,36 @@ def test_tick_diagnostic_symbol_not_found_fails_without_crashing_worker(monkeypa
     assert "tick_diagnostic_failed" in types
     failed = next(item for item in event_queue.items if item["event"] == "tick_diagnostic_failed")
     assert failed["data"]["reason"] == "symbol_not_found"
+    # COR-DEV-002 item 4: a mensagem não afirma que o alias precisava ser
+    # ativo/negociável; ausência histórica é sobre estar listado ou não.
+    assert "negoci" not in failed["data"]["message"].lower()
+    assert "ativo/tradável" not in failed["data"]["message"]
     assert "error" not in types
     assert connector.copy_calls == []
+
+
+def test_tick_diagnostic_accepts_non_tradable_win_dollar_and_collects_from_it(monkeypatch) -> None:
+    """COR-DEV-002: WIN$ listado e exato, porém não negociável na Clear, deve
+    ser aceito pela resolução histórica do diagnóstico e usado na coleta —
+    diferente do resolvedor operacional, que o recusaria."""
+
+    connector = FakeConnector(TerminalProfile(id="terminal-fake", label="Fake"))
+    connector.symbol_states = {
+        "WIN$": {"tradable": False, "has_quote": True, "visible": True, "selected": True}
+    }
+    request = _make_request()
+    command = worker_command("diagnose_ticks", request=request.to_dict())
+
+    event_queue = _run_worker(monkeypatch, connector, [command])
+
+    types = _event_types(event_queue)
+    assert "tick_diagnostic_failed" not in types
+    accepted = next(
+        item for item in event_queue.items if item["event"] == "tick_diagnostic_accepted"
+    )
+    assert accepted["data"]["resolved_symbol"] == "WIN$"
+    assert connector.copy_calls
+    assert all(call[0] == "WIN$" for call in connector.copy_calls)
 
 
 def test_tick_diagnostic_mt5_error_fails_without_contaminating_connection_state(

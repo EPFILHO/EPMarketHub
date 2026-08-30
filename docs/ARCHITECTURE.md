@@ -80,4 +80,4 @@ Os registros são gravados em arquivo temporário, sincronizados e promovidos po
 
 ## Símbolos
 
-`SymbolRegistry` mantém ativos lógicos com aliases. A resolução do símbolo ocorre dentro de cada worker usando metadados do MT5. O critério atual prioriza símbolos tradáveis e com cotação válida.
+`SymbolRegistry` mantém ativos lógicos com aliases. A resolução do símbolo ocorre dentro de cada worker usando metadados do MT5. O critério operacional (snapshot, streaming) prioriza símbolos tradáveis e com cotação válida e recusa candidatos não negociáveis. O diagnóstico de ticks usa uma resolução histórica/de dados separada, que aceita um alias exato listado mesmo sem negociação habilitada (ex.: `WIN$` na Clear); aceitar essa fonte para histórico não a torna negociável nem altera a resolução operacional.
