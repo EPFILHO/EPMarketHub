@@ -17,6 +17,7 @@ WORKER_COMMAND_TYPES = frozenset(
         "set_live_stream",
         "clear_live_stream",
         "clear_all_live_streams",
+        "diagnose_ticks",
     }
 )
 
@@ -31,6 +32,10 @@ WORKER_EVENT_TYPES = frozenset(
         "terminal_restart_required",
         "error",
         "stopped",
+        "tick_diagnostic_accepted",
+        "tick_diagnostic_window_result",
+        "tick_diagnostic_completed",
+        "tick_diagnostic_failed",
     }
 )
 

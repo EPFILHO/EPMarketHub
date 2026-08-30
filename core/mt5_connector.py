@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
+
+from market_analytics.tick_diagnostics import mt5_tick_type_attr
 
 from .models import TerminalConnectionStatus, TerminalProfile, TickSnapshot
 from .terminal_states import (
@@ -21,6 +23,21 @@ try:
     import MetaTrader5 as mt5  # type: ignore
 except Exception:  # pragma: no cover - permite abrir o app sem MT5 instalado
     mt5 = None
+
+
+class MT5TicksError(Exception):
+    """Falha estruturada ao consultar ``copy_ticks_range``.
+
+    `reason` usa o vocabulário de `market_analytics.tick_diagnostics`
+    (``mt5_error``, ``malformed_response`` etc.) para que o worker emita o
+    evento de diagnóstico certo sem precisar reclassificar a exceção.
+    """
+
+    def __init__(self, reason: str, message: str, *, code: int | None = None) -> None:
+        super().__init__(message)
+        self.reason = reason
+        self.message = message
+        self.code = code
 
 
 class MT5Connector:
@@ -377,3 +394,42 @@ class MT5Connector:
                 item["time_iso"] = datetime.fromtimestamp(item["time"]).isoformat(timespec="seconds")
             result.append(item)
         return result
+
+    def copy_ticks_chunk(self, symbol: str, tick_type: str, start_utc: datetime, end_utc: datetime) -> Any:
+        """Retorna o array bruto de ``mt5.copy_ticks_range`` para um chunk pequeno.
+
+        Não converte o array em lista de dicionários: o chamador (o loop do
+        worker) deve iterar e descartar incrementalmente, sem nunca
+        materializar o histórico inteiro em memória. `start_utc`/`end_utc`
+        são passados timezone-aware em UTC diretamente à API — nunca
+        convertidos para `datetime` naive.
+
+        Esta chamada é síncrona: o processo fica bloqueado até a corretora
+        (ou o cache/Tester) responder, mesmo para um chunk pequeno.
+
+        Qualquer exceção comum levantada pela resolução da constante de
+        tick_type ou pela própria chamada `copy_ticks_range` é normalizada
+        para `MT5TicksError` (razão ``mt5_error``), nunca propagada crua —
+        quem chama este método não precisa (nem deve) tratar exceções
+        genéricas do MT5 separadamente.
+        """
+
+        if not self.initialized:
+            raise MT5TicksError("terminal_disconnected", "Conector MT5 ainda não inicializado.")
+        if mt5 is None:
+            raise MT5TicksError("mt5_error", "Biblioteca MetaTrader5 não instalada.")
+        for value, name in ((start_utc, "start_utc"), (end_utc, "end_utc")):
+            if value.tzinfo is None or value.utcoffset() != timedelta(0):
+                raise ValueError(f"{name} deve ser timezone-aware em UTC (recebido: {value!r})")
+
+        try:
+            flag = getattr(mt5, mt5_tick_type_attr(tick_type))
+            ticks = mt5.copy_ticks_range(symbol, start_utc, end_utc, flag)
+        except Exception as exc:
+            # Normaliza qualquer falha comum da API/constante em MT5TicksError
+            # em vez de deixá-la escapar como exceção crua.
+            raise MT5TicksError("mt5_error", str(exc)) from exc
+        if ticks is None:
+            code, msg = mt5.last_error()
+            raise MT5TicksError("mt5_error", msg, code=code)
+        return ticks

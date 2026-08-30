@@ -54,6 +54,7 @@ versão do protocolo e testes de compatibilidade.
 | `set_live_stream` | `slot_id`, `symbol` | cria ou altera um fluxo |
 | `clear_live_stream` | `slot_id` | remove um fluxo |
 | `clear_all_live_streams` | nenhum | remove todos os fluxos daquele worker |
+| `diagnose_ticks` | `request` | executa um diagnóstico somente leitura de cobertura de ticks |
 
 ## Eventos aceitos
 
@@ -68,6 +69,17 @@ versão do protocolo e testes de compatibilidade.
 | `terminal_restart_required` | worker vivo detectou seu MT5 fechado |
 | `error` | falha não recuperada do worker |
 | `stopped` | worker encerrado |
+| `tick_diagnostic_accepted` | diagnóstico de ticks aceito e símbolo resolvido |
+| `tick_diagnostic_window_result` | resumo pequeno de uma janela do diagnóstico |
+| `tick_diagnostic_completed` | todas as janelas do diagnóstico foram concluídas |
+| `tick_diagnostic_failed` | falha estruturada do diagnóstico, isolada do estado de conexão |
+
+Os quatro eventos de diagnóstico de ticks e o comando `diagnose_ticks` são
+extensões compatíveis do protocolo v1: o envelope e os campos obrigatórios
+não mudam. Eles carregam apenas um resumo pequeno correlacionado por
+`request_id` (nunca ticks brutos) e não alimentam o vocabulário de
+`data.state` do worker/terminal — uma falha de diagnóstico nunca é
+reportada como `error` genérico nem contamina o estado de conexão.
 
 O PID identifica a execução proprietária. O supervisor rejeita eventos de uma
 execução anterior antes que alcancem a bridge.

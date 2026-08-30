@@ -11,9 +11,15 @@ from typing import Any
 
 import psutil
 
+from market_analytics.tick_diagnostics import (
+    TickRecord,
+    TickWindowAccumulator,
+    TickWindowRequest,
+)
+
 from .market_snapshot import build_snapshot_from_connector, resolve_symbol_aliases
 from .models import SymbolDefinition, TerminalProfile
-from .mt5_connector import MT5Connector
+from .mt5_connector import MT5Connector, MT5TicksError
 from .terminal_states import (
     IPC_ATTACHED_STATES,
     WorkerConnectionState,
@@ -133,6 +139,182 @@ def _emit_live_status(
     )
 
 
+def _emit_tick_diagnostic_event(
+    event_queue,
+    profile: TerminalProfile,
+    event_type: str,
+    request_id: str,
+    extra: dict[str, Any] | None = None,
+) -> None:
+    payload: dict[str, Any] = {"request_id": request_id, "pid": os.getpid()}
+    if extra:
+        payload.update(extra)
+    _emit(event_queue, profile.id, event_type, payload)
+
+
+def _emit_tick_diagnostic_failed(
+    event_queue,
+    profile: TerminalProfile,
+    request_id: str,
+    reason: str,
+    message: str,
+    *,
+    code: int | None = None,
+) -> None:
+    _emit_tick_diagnostic_event(
+        event_queue,
+        profile,
+        "tick_diagnostic_failed",
+        request_id,
+        {"reason": reason, "message": message, "code": code},
+    )
+
+
+def _start_tick_diagnostic(
+    event_queue,
+    profile: TerminalProfile,
+    request: TickWindowRequest,
+    available_symbol_states: dict[str, dict[str, Any]],
+) -> dict[str, Any] | None:
+    resolved_symbol = resolve_symbol_aliases(
+        list(request.aliases), set(available_symbol_states), available_symbol_states
+    )
+    if not resolved_symbol:
+        _emit_tick_diagnostic_failed(
+            event_queue,
+            profile,
+            request.request_id,
+            "symbol_not_found",
+            "Nenhum alias ativo/tradável deste ativo foi encontrado neste MT5.",
+        )
+        return None
+    active: dict[str, Any] = {
+        "request": request,
+        "resolved_symbol": resolved_symbol,
+        "window_index": 0,
+        "chunk_index": 0,
+        "chunk_lists": [window.chunks(request.chunk_seconds) for window in request.windows],
+        "accumulator": TickWindowAccumulator(),
+    }
+    _emit_tick_diagnostic_event(
+        event_queue,
+        profile,
+        "tick_diagnostic_accepted",
+        request.request_id,
+        {
+            "resolved_symbol": resolved_symbol,
+            "source_id": profile.id,
+            "logical_id": request.logical_id,
+        },
+    )
+    return active
+
+
+def _advance_tick_diagnostic(
+    event_queue,
+    profile: TerminalProfile,
+    connector: MT5Connector,
+    active: dict[str, Any],
+) -> str:
+    """Processa exatamente um chunk do diagnóstico ativo.
+
+    Retorna ``"progress"``, ``"completed"`` ou ``"failed"``. Nunca guarda o
+    array bruto de ticks: itera e descarta a cada chamada, delegando o
+    resumo ao acumulador incremental de `market_analytics.tick_diagnostics`.
+    """
+
+    request: TickWindowRequest = active["request"]
+    windows = request.windows
+    window_index = active["window_index"]
+    if window_index >= len(windows):
+        return "completed"
+    window = windows[window_index]
+    chunk_list = active["chunk_lists"][window_index]
+    chunk = chunk_list[active["chunk_index"]]
+    accumulator: TickWindowAccumulator = active["accumulator"]
+
+    try:
+        raw_ticks = connector.copy_ticks_chunk(
+            active["resolved_symbol"], request.tick_type, chunk.start_utc, chunk.end_utc
+        )
+    except MT5TicksError as exc:
+        _emit_tick_diagnostic_failed(
+            event_queue, profile, request.request_id, exc.reason, exc.message, code=exc.code
+        )
+        return "failed"
+    except Exception as exc:
+        # Defesa em profundidade: qualquer exceção comum que escape do
+        # conector (ex.: um fake de teste, ou um caso não previsto na
+        # normalização do conector) também vira falha estruturada do
+        # diagnóstico, nunca um crash do worker.
+        _emit_tick_diagnostic_failed(event_queue, profile, request.request_id, "mt5_error", str(exc))
+        return "failed"
+
+    # Fronteira [start, end) filtrada por time_msc: nossas próprias
+    # fronteiras entre chunks não perdem nem duplicam um tick que a API já
+    # tenha retornado. Isso não garante que a corretora/cache/Tester tenha
+    # fornecido todos os ticks realmente existentes no intervalo.
+    chunk_start_ms = int(chunk.start_utc.timestamp() * 1000)
+    chunk_end_ms = int(chunk.end_utc.timestamp() * 1000)
+    try:
+        for row in raw_ticks:
+            time_msc = int(row["time_msc"])
+            if time_msc < chunk_start_ms or time_msc >= chunk_end_ms:
+                continue
+            accumulator.consume(
+                TickRecord(
+                    time=int(row["time"]),
+                    time_msc=time_msc,
+                    bid=float(row["bid"]),
+                    ask=float(row["ask"]),
+                    last=float(row["last"]),
+                    volume=float(row["volume"]),
+                    volume_real=float(row["volume_real"]),
+                    flags=int(row["flags"]),
+                )
+            )
+    except Exception as exc:
+        # Cobre erros de extração (campo ausente/tipo errado) e de
+        # validação (NaN/infinito, timestamp incoerente, flags inválidas)
+        # levantados por `TickWindowAccumulator.consume`.
+        _emit_tick_diagnostic_failed(
+            event_queue,
+            profile,
+            request.request_id,
+            "malformed_response",
+            f"Retorno malformado de copy_ticks_range: {exc}",
+        )
+        return "failed"
+
+    active["chunk_index"] += 1
+    if active["chunk_index"] < len(chunk_list):
+        return "progress"
+
+    summary = accumulator.finalize(
+        window=window,
+        request_id=request.request_id,
+        pid=os.getpid(),
+        source_id=profile.id,
+        logical_id=request.logical_id,
+        resolved_symbol=active["resolved_symbol"],
+        tick_type=request.tick_type,
+    )
+    _emit_tick_diagnostic_event(
+        event_queue,
+        profile,
+        "tick_diagnostic_window_result",
+        request.request_id,
+        {"summary": summary.to_dict()},
+    )
+    active["window_index"] += 1
+    active["chunk_index"] = 0
+    active["accumulator"] = TickWindowAccumulator()
+    if active["window_index"] >= len(windows):
+        _emit_tick_diagnostic_event(event_queue, profile, "tick_diagnostic_completed", request.request_id)
+        return "completed"
+    return "progress"
+
+
 def mt5_worker_main(
     profile_data: dict[str, Any],
     symbol_rows: list[dict[str, Any]],
@@ -168,6 +350,9 @@ def mt5_worker_main(
 
     # slot_id -> configuração e estado local do fluxo.
     live_streams: dict[str, dict[str, Any]] = {}
+
+    # Diagnóstico de cobertura de ticks ativo (no máximo um por worker).
+    active_tick_diagnostic: dict[str, Any] | None = None
 
     _emit(
         event_queue,
@@ -261,6 +446,56 @@ def mt5_worker_main(
                             connected=connector.initialized,
                         )
                     live_streams.clear()
+                elif action == "diagnose_ticks":
+                    payload = command.get("request")
+                    payload = payload if isinstance(payload, dict) else {}
+                    request_id = str(payload.get("request_id", "")).strip()
+                    try:
+                        request = TickWindowRequest.from_dict(payload)
+                    except (ValueError, KeyError, TypeError) as exc:
+                        _emit_tick_diagnostic_failed(
+                            event_queue, profile, request_id, "invalid_request", str(exc)
+                        )
+                    else:
+                        active_request = (
+                            active_tick_diagnostic["request"] if active_tick_diagnostic else None
+                        )
+                        if active_request and active_request.request_id == request.request_id:
+                            if active_request.fingerprint() != request.fingerprint():
+                                _emit_tick_diagnostic_failed(
+                                    event_queue,
+                                    profile,
+                                    request.request_id,
+                                    "request_id_conflict",
+                                    "Este request_id já está em execução com parâmetros diferentes.",
+                                )
+                            # Mesmo request_id e mesma impressão: idempotente, nada a fazer.
+                        elif active_tick_diagnostic:
+                            _emit_tick_diagnostic_failed(
+                                event_queue,
+                                profile,
+                                request.request_id,
+                                "diagnostic_busy",
+                                "Já existe um diagnóstico de ticks em andamento neste worker.",
+                            )
+                        elif not (
+                            connector.initialized
+                            and last_state == WorkerConnectionState.CONNECTED.value
+                        ):
+                            _emit_tick_diagnostic_failed(
+                                event_queue,
+                                profile,
+                                request.request_id,
+                                "terminal_disconnected",
+                                "Terminal não está conectado; diagnóstico não iniciado.",
+                            )
+                        else:
+                            if not available_symbol_states or now - available_symbols_updated >= 30.0:
+                                available_symbol_states = connector.list_symbol_states()
+                                available_symbols_updated = now
+                            active_tick_diagnostic = _start_tick_diagnostic(
+                                event_queue, profile, request, available_symbol_states
+                            )
 
             if stop_event.is_set():
                 break
@@ -506,6 +741,23 @@ def mt5_worker_main(
                             _emit(event_queue, profile.id, "live_tick", {"tick": tick_payload})
 
                         next_live_poll = now + max(0.05, live_poll_seconds)
+
+            if active_tick_diagnostic is not None:
+                if connector.initialized and last_state == WorkerConnectionState.CONNECTED.value:
+                    outcome = _advance_tick_diagnostic(
+                        event_queue, profile, connector, active_tick_diagnostic
+                    )
+                    if outcome in ("completed", "failed"):
+                        active_tick_diagnostic = None
+                else:
+                    _emit_tick_diagnostic_failed(
+                        event_queue,
+                        profile,
+                        active_tick_diagnostic["request"].request_id,
+                        "terminal_disconnected",
+                        "Conexão perdida durante o diagnóstico de ticks.",
+                    )
+                    active_tick_diagnostic = None
 
             if now >= next_heartbeat:
                 status = connector.connection_status() if connector.initialized else None

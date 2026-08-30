@@ -10,6 +10,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from market_analytics.tick_diagnostics import TickWindowRequest
+
 from .config import MAX_ACTIVE_TERMINALS
 from .models import SymbolDefinition, TerminalProfile
 from .mt5_worker import mt5_worker_main
@@ -54,6 +56,7 @@ class MT5WorkerManager:
         self._live_ticks: dict[str, dict[str, Any]] = {}
         self._live_statuses: dict[str, dict[str, Any]] = {}
         self._last_activity: dict[str, float] = {}
+        self._tick_diagnostics: dict[str, dict[str, Any]] = {}
         self._shutdown = False
         self._lock = threading.RLock()
         self._stopping_terminal_ids: set[str] = set()
@@ -289,6 +292,13 @@ class MT5WorkerManager:
             self._snapshots.pop(terminal_id, None)
             self._last_activity.pop(terminal_id, None)
             self._stopping_terminal_ids.discard(terminal_id)
+            stale_requests = [
+                request_id
+                for request_id, entry in self._tick_diagnostics.items()
+                if entry.get("terminal_id") == terminal_id
+            ]
+            for request_id in stale_requests:
+                self._tick_diagnostics.pop(request_id, None)
         self.clear_live_streams_for_terminal(terminal_id)
 
     def request_snapshot(self, terminal_id: str) -> tuple[bool, str]:
@@ -370,6 +380,76 @@ class MT5WorkerManager:
             slot_ids = list(self._live_slots)
         for slot_id in slot_ids:
             self.clear_live_stream(slot_id)
+
+    def request_tick_diagnostic(
+        self, terminal_id: str, request: TickWindowRequest
+    ) -> tuple[bool, str]:
+        """Encaminha um diagnóstico de ticks ao worker dono da conexão.
+
+        A identidade imutável da solicitação é o par (`terminal_id`,
+        impressão digital canônica do payload), guardado indefinidamente
+        durante a vida deste supervisor — não só enquanto está em execução.
+        O mesmo `request_id` reutilizado em outro `terminal_id`, mesmo com
+        payload idêntico, é um `request_id_conflict`: nenhum comando é
+        enviado a um segundo worker. A checagem e a reserva do `request_id`
+        acontecem em uma única seção crítica, sem soltar o lock entre elas,
+        para que duas chamadas concorrentes não possam reservar o mesmo
+        `request_id` em terminais diferentes.
+        """
+
+        fingerprint = request.fingerprint()
+        with self._lock:
+            existing = self._tick_diagnostics.get(request.request_id)
+            if existing is not None:
+                if existing["terminal_id"] != terminal_id or existing["fingerprint"] != fingerprint:
+                    return (
+                        False,
+                        "request_id já usado em outro terminal ou com parâmetros diferentes "
+                        "(request_id_conflict).",
+                    )
+                return True, "Diagnóstico já registrado; reaproveitando o estado existente."
+
+            if not self.is_running(terminal_id):
+                return False, "Inicie a leitura persistente deste terminal antes do diagnóstico."
+
+            # Reserva o request_id antes de soltar o lock, para que uma
+            # segunda chamada concorrente (mesmo request_id, outro terminal)
+            # sempre encontre esta reserva em vez de também passar pelo
+            # `existing is None` acima.
+            self._tick_diagnostics[request.request_id] = {
+                "terminal_id": terminal_id,
+                "fingerprint": fingerprint,
+                "state": "pending",
+                "pid": None,
+                "windows": [],
+                "error": None,
+                "updated_at": now_iso(),
+            }
+
+        sent, message = self._send_command(
+            terminal_id,
+            worker_command("diagnose_ticks", request=request.to_dict()),
+            "Diagnóstico de ticks solicitado.",
+        )
+        if not sent:
+            with self._lock:
+                current = self._tick_diagnostics.get(request.request_id)
+                if (
+                    current is not None
+                    and current["terminal_id"] == terminal_id
+                    and current["fingerprint"] == fingerprint
+                ):
+                    self._tick_diagnostics.pop(request.request_id, None)
+        return sent, message
+
+    def tick_diagnostic_status(self, request_id: str) -> dict[str, Any] | None:
+        with self._lock:
+            entry = self._tick_diagnostics.get(request_id)
+            return dict(entry) if entry is not None else None
+
+    def tick_diagnostics_payload(self) -> dict[str, dict[str, Any]]:
+        with self._lock:
+            return {request_id: dict(entry) for request_id, entry in self._tick_diagnostics.items()}
 
     def _restore_live_streams(self, terminal_id: str) -> None:
         with self._lock:
@@ -523,6 +603,36 @@ class MT5WorkerManager:
                     **configured,
                     **data,
                 }
+        elif event_type in {
+            "tick_diagnostic_accepted",
+            "tick_diagnostic_window_result",
+            "tick_diagnostic_completed",
+            "tick_diagnostic_failed",
+        }:
+            # Estado de job de diagnóstico, nunca misturado ao WorkerState de
+            # conexão do terminal.
+            request_id = str(data.get("request_id", ""))
+            entry = self._tick_diagnostics.get(request_id)
+            if not entry or entry.get("terminal_id") != terminal_id:
+                return False
+            entry["pid"] = data.get("pid", entry.get("pid"))
+            entry["updated_at"] = now_iso()
+            if event_type == "tick_diagnostic_accepted":
+                entry["state"] = "running"
+                entry["resolved_symbol"] = data.get("resolved_symbol")
+            elif event_type == "tick_diagnostic_window_result":
+                summary = data.get("summary")
+                if isinstance(summary, dict):
+                    entry["windows"].append(summary)
+            elif event_type == "tick_diagnostic_completed":
+                entry["state"] = "completed"
+            else:
+                entry["state"] = "failed"
+                entry["error"] = {
+                    "reason": data.get("reason"),
+                    "message": data.get("message"),
+                    "code": data.get("code"),
+                }
         else:
             state.update(data)
 
@@ -533,12 +643,33 @@ class MT5WorkerManager:
             self._mark_live_terminal_stopped(terminal_id)
         return True
 
+    def _interrupt_tick_diagnostics_for_terminal(self, terminal_id: str, message: str) -> None:
+        """Marca diagnósticos pendentes/em execução como interrompidos.
+
+        A falha de um diagnóstico nunca contamina `WorkerState`, mas a morte
+        ou falta de resposta real do worker precisa ser refletida também no
+        próprio diagnóstico, sem deixá-lo preso em "running" para sempre.
+        """
+
+        with self._lock:
+            for entry in self._tick_diagnostics.values():
+                if entry.get("terminal_id") == terminal_id and entry.get("state") in {
+                    "pending",
+                    "running",
+                }:
+                    entry["state"] = "interrupted"
+                    entry["error"] = {"reason": "worker_unavailable", "message": message}
+                    entry["updated_at"] = now_iso()
+
     def _detect_dead_workers(self, events: list[dict[str, Any]]) -> None:
         with self._lock:
             handles = list(self._handles.items())
         for terminal_id, handle in handles:
             if handle.process.is_alive():
                 continue
+            self._interrupt_tick_diagnostics_for_terminal(
+                terminal_id, "Worker terminou antes da conclusão do diagnóstico."
+            )
             with self._lock:
                 state = self._states.setdefault(terminal_id, WorkerState(terminal_id=terminal_id))
                 if (
@@ -613,6 +744,9 @@ class MT5WorkerManager:
                         data=state.to_dict(),
                     ).to_dict()
                 )
+            self._interrupt_tick_diagnostics_for_terminal(
+                terminal_id, "Worker sem resposta durante o diagnóstico."
+            )
 
     def _cleanup_handle(self, terminal_id: str, handle: WorkerHandle) -> None:
         with self._lock:

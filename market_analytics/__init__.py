@@ -13,6 +13,18 @@ from .config import FeatureConfig
 from .features import FEATURE_SCHEMA_VERSION, FeatureRow
 from .pipeline import compute_feature_rows
 from .storage import load_feature_artifact, save_feature_artifact
+from .tick_diagnostics import (
+    CANONICAL_TICK_TYPES,
+    EMPTY_REASON_NO_TICKS,
+    FAILURE_REASONS,
+    TickRecord,
+    TickWindow,
+    TickWindowAccumulator,
+    TickWindowRequest,
+    TickWindowSummary,
+    mt5_tick_type_attr,
+    validate_tick_record,
+)
 
 __all__ = [
     "Bar",
@@ -23,4 +35,14 @@ __all__ = [
     "compute_feature_rows",
     "save_feature_artifact",
     "load_feature_artifact",
+    "CANONICAL_TICK_TYPES",
+    "EMPTY_REASON_NO_TICKS",
+    "FAILURE_REASONS",
+    "TickRecord",
+    "TickWindow",
+    "TickWindowAccumulator",
+    "TickWindowRequest",
+    "TickWindowSummary",
+    "mt5_tick_type_attr",
+    "validate_tick_record",
 ]
