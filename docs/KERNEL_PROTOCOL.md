@@ -105,6 +105,12 @@ depender só da biblioteca padrão nessa fatia: o escritor Parquet usa
 O PID identifica a execução proprietária. O supervisor rejeita eventos de uma
 execução anterior antes que alcancem a bridge.
 
+Para backfill, a propriedade persiste no catálogo como `PID + instante de
+criação do processo + terminal + attempt_id`. Essa identidade não atravessa a
+fila com ticks e não altera o protocolo v1. Na reinicialização, o supervisor
+libera uma sessão `running` somente se o processo exato deixou de existir; um
+processo vivo sem heartbeat continua proprietário.
+
 O campo `data.state` usa o vocabulário de `core/terminal_states.py`. Novos
 valores desta versão são extensões compatíveis do protocolo v1: o envelope, os
 tipos de comando/evento e os campos obrigatórios permanecem inalterados.

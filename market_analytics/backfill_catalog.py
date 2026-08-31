@@ -34,7 +34,7 @@ from typing import Any
 
 from .tick_diagnostics import TickWindowSummary
 
-CATALOG_SCHEMA_VERSION = 1
+CATALOG_SCHEMA_VERSION = 2
 
 # Tempo que uma conexão espera pelo lock de escrita de outra antes de
 # desistir. SQLite então levanta `sqlite3.OperationalError` ("database is
@@ -56,6 +56,9 @@ CREATE TABLE IF NOT EXISTS backfill_sessions (
     logical_id TEXT NOT NULL,
     session_date TEXT NOT NULL,
     attempt_id TEXT,
+    owner_pid INTEGER,
+    owner_process_started_at REAL,
+    owner_terminal_id TEXT,
     resolved_symbol TEXT,
     session_timezone TEXT NOT NULL,
     tick_type TEXT NOT NULL,
@@ -94,6 +97,12 @@ CREATE TABLE IF NOT EXISTS backfill_sessions (
 
 _JSON_COLUMNS = ("non_zero_counts", "flags_histogram", "largest_gaps_seconds")
 
+_SCHEMA_V2_COLUMNS = {
+    "owner_pid": "INTEGER",
+    "owner_process_started_at": "REAL",
+    "owner_terminal_id": "TEXT",
+}
+
 
 class CatalogStateError(Exception):
     """Transição de catálogo recusada (sessão já concluída, corrida, lock, etc.)."""
@@ -121,6 +130,7 @@ def open_catalog(db_path: Path) -> sqlite3.Connection:
         conn.execute(f"PRAGMA busy_timeout={_BUSY_TIMEOUT_MS}")
         _set_wal_journal_mode(conn)
         conn.execute(_SCHEMA_SQL)
+        _migrate_schema(conn)
     except sqlite3.Error as exc:
         if conn is not None:
             try:
@@ -129,6 +139,30 @@ def open_catalog(db_path: Path) -> sqlite3.Connection:
                 pass
         raise CatalogStateError(f"sqlite_error: falha ao abrir o catálogo: {exc}") from exc
     return conn
+
+
+def _migrate_schema(conn: sqlite3.Connection) -> None:
+    """Adiciona, de forma transacional, campos de propriedade introduzidos
+    no schema v2 sem perder catálogos v1 já existentes.
+
+    Duas instâncias abrindo o mesmo catálogo são serializadas por
+    ``BEGIN IMMEDIATE``; a segunda relê o schema depois que a primeira
+    termina e não tenta adicionar a mesma coluna novamente.
+    """
+
+    existing = {row[1] for row in conn.execute("PRAGMA table_info(backfill_sessions)").fetchall()}
+    if _SCHEMA_V2_COLUMNS.keys() <= existing:
+        return
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        existing = {row[1] for row in conn.execute("PRAGMA table_info(backfill_sessions)").fetchall()}
+        for name, sql_type in _SCHEMA_V2_COLUMNS.items():
+            if name not in existing:
+                conn.execute(f"ALTER TABLE backfill_sessions ADD COLUMN {name} {sql_type}")
+        conn.execute("COMMIT")
+    except sqlite3.Error:
+        _rollback(conn)
+        raise
 
 
 def _set_wal_journal_mode(conn: sqlite3.Connection) -> None:
@@ -170,6 +204,23 @@ def get_session(
     return _row_to_dict(row) if row is not None else None
 
 
+def list_running_sessions(conn: sqlite3.Connection) -> list[dict[str, Any]]:
+    """Lista tentativas atualmente ``running`` para recuperação operacional.
+
+    A função apenas lê o catálogo. Decidir se o processo proprietário morreu
+    pertence ao supervisor, que conhece o sistema operacional e nunca usa
+    ausência de heartbeat como prova de morte.
+    """
+
+    try:
+        rows = conn.execute(
+            "SELECT * FROM backfill_sessions WHERE state='running' ORDER BY source_id, logical_id, session_date"
+        ).fetchall()
+    except sqlite3.Error as exc:
+        raise CatalogStateError(f"sqlite_error: falha ao listar sessões em execução: {exc}") from exc
+    return [_row_to_dict(row) for row in rows]
+
+
 def begin_attempt(
     conn: sqlite3.Connection,
     *,
@@ -181,6 +232,9 @@ def begin_attempt(
     requested_start_utc: datetime,
     requested_end_utc: datetime,
     rebuild: bool,
+    owner_pid: int | None = None,
+    owner_process_started_at: float | None = None,
+    owner_terminal_id: str | None = None,
 ) -> dict[str, Any]:
     """Registra o início de uma tentativa para a sessão.
 
@@ -197,6 +251,7 @@ def begin_attempt(
     identidade que toda transição terminal subsequente precisa apresentar.
     """
 
+    _validate_owner_identity(owner_pid, owner_process_started_at, owner_terminal_id)
     now = _now_iso()
     attempt_id = new_attempt_id()
     try:
@@ -230,7 +285,8 @@ def begin_attempt(
             conn.execute(
                 """
                 UPDATE backfill_sessions SET
-                    state='running', attempt_id=?, attempts=?, resolved_symbol=NULL,
+                    state='running', attempt_id=?, owner_pid=?, owner_process_started_at=?,
+                    owner_terminal_id=?, attempts=?, resolved_symbol=NULL,
                     session_timezone=?, tick_type=?, requested_start_utc=?, requested_end_utc=?,
                     started_at=?, ended_at=NULL, duration_seconds=NULL,
                     first_tick_utc=NULL, last_tick_utc=NULL, tick_count=NULL,
@@ -239,17 +295,21 @@ def begin_attempt(
                     empty_reason=NULL, file_path=NULL, file_size_bytes=NULL, sha256=NULL,
                     schema_version=NULL, collector_version=NULL, reconciled=0,
                     error_reason=NULL, error_message=NULL, error_code=NULL,
-                    updated_at=?
+                    catalog_schema_version=?, updated_at=?
                 WHERE source_id=? AND logical_id=? AND session_date=?
                 """,
                 (
                     attempt_id,
+                    owner_pid,
+                    owner_process_started_at,
+                    owner_terminal_id,
                     attempts,
                     session_timezone,
                     tick_type,
                     requested_start_utc.isoformat(),
                     requested_end_utc.isoformat(),
                     now,
+                    CATALOG_SCHEMA_VERSION,
                     now,
                     source_id,
                     logical_id,
@@ -261,16 +321,21 @@ def begin_attempt(
             conn.execute(
                 """
                 INSERT INTO backfill_sessions (
-                    source_id, logical_id, session_date, attempt_id, resolved_symbol, session_timezone,
+                    source_id, logical_id, session_date, attempt_id,
+                    owner_pid, owner_process_started_at, owner_terminal_id,
+                    resolved_symbol, session_timezone,
                     tick_type, state, attempts, requested_start_utc, requested_end_utc,
                     started_at, catalog_schema_version, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, NULL, ?, ?, 'running', ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, 'running', ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     source_id,
                     logical_id,
                     session_date.isoformat(),
                     attempt_id,
+                    owner_pid,
+                    owner_process_started_at,
+                    owner_terminal_id,
                     session_timezone,
                     tick_type,
                     attempts,
@@ -292,6 +357,29 @@ def begin_attempt(
     result = get_session(conn, source_id=source_id, logical_id=logical_id, session_date=session_date)
     assert result is not None
     return result
+
+
+def _validate_owner_identity(
+    owner_pid: int | None,
+    owner_process_started_at: float | None,
+    owner_terminal_id: str | None,
+) -> None:
+    if (owner_pid is None) != (owner_process_started_at is None):
+        raise ValueError("owner_pid e owner_process_started_at devem ser informados juntos")
+    if owner_terminal_id is not None and owner_pid is None:
+        raise ValueError("owner_terminal_id exige a identidade do processo proprietário")
+    if owner_pid is not None and (isinstance(owner_pid, bool) or not isinstance(owner_pid, int) or owner_pid <= 0):
+        raise ValueError("owner_pid deve ser inteiro positivo")
+    if owner_process_started_at is not None and (
+        isinstance(owner_process_started_at, bool)
+        or not isinstance(owner_process_started_at, (int, float))
+        or owner_process_started_at <= 0
+    ):
+        raise ValueError("owner_process_started_at deve ser número positivo")
+    if owner_terminal_id is not None and (
+        not isinstance(owner_terminal_id, str) or not owner_terminal_id.strip() or len(owner_terminal_id) > 128
+    ):
+        raise ValueError("owner_terminal_id deve ser texto não vazio de até 128 caracteres")
 
 
 def complete_session(

@@ -10,10 +10,17 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+import psutil
+
 from market_analytics.backfill_catalog import get_session as catalog_get_session
 from market_analytics.backfill_catalog import interrupt_session as catalog_interrupt_session
-from market_analytics.backfill_catalog import open_catalog
-from market_analytics.tick_backfill import BackfillSessionRequest, catalog_db_path
+from market_analytics.backfill_catalog import list_running_sessions, open_catalog
+from market_analytics.backfill_writer import discard_partial
+from market_analytics.tick_backfill import (
+    BackfillSessionRequest,
+    catalog_db_path,
+    raw_partition_dir,
+)
 from market_analytics.tick_diagnostics import TickWindowRequest
 
 from .config import DEFAULT_MARKET_DATA_ROOT, MAX_ACTIVE_TERMINALS
@@ -27,6 +34,8 @@ from .terminal_states import (
 from .worker_protocol import WorkerEvent, WorkerState, now_iso, valid_worker_event, worker_command
 
 logger = logging.getLogger(__name__)
+
+_BACKFILL_RECOVERY_SCAN_SECONDS = 5.0
 
 
 @dataclass
@@ -65,6 +74,8 @@ class MT5WorkerManager:
         self._tick_diagnostics: dict[str, dict[str, Any]] = {}
         self._backfills: dict[str, dict[str, Any]] = {}
         self._backfill_catalog_conn = None
+        self._last_backfill_recovery_scan = 0.0
+        self._unowned_running_warned: set[tuple[str, str, object]] = set()
         self._shutdown = False
         self._lock = threading.RLock()
         self._stopping_terminal_ids: set[str] = set()
@@ -617,6 +628,7 @@ class MT5WorkerManager:
                 events.append(event)
 
         self._detect_dead_workers(events)
+        self._recover_orphaned_catalog_sessions()
         self._detect_unresponsive_workers(events)
         return events
 
@@ -807,6 +819,95 @@ class MT5WorkerManager:
         if self._backfill_catalog_conn is None:
             self._backfill_catalog_conn = open_catalog(catalog_db_path(self.backfill_data_root))
         return self._backfill_catalog_conn
+
+    @staticmethod
+    def _catalog_owner_alive(row: dict[str, Any]) -> bool | None:
+        """Confere PID e instante real de criação do processo proprietário.
+
+        ``False`` é prova de que o dono morreu (PID ausente ou reutilizado),
+        ``True`` preserva sua propriedade e ``None`` significa que a prova
+        não pôde ser obtida. Falta de heartbeat nunca participa da decisão.
+        """
+
+        pid = row.get("owner_pid")
+        expected_started_at = row.get("owner_process_started_at")
+        if pid is None or expected_started_at is None:
+            return None
+        try:
+            process = psutil.Process(int(pid))
+            if not process.is_running():
+                return False
+            actual_started_at = process.create_time()
+        except psutil.NoSuchProcess:
+            return False
+        except (psutil.AccessDenied, OSError, ValueError, TypeError):
+            return None
+        return abs(float(actual_started_at) - float(expected_started_at)) < 0.001
+
+    def _recover_orphaned_catalog_sessions(self, *, force: bool = False) -> None:
+        """Libera tentativas órfãs mesmo após reinício completo do aplicativo.
+
+        A varredura usa somente a identidade persistida do processo. Uma
+        sessão sem identidade (catálogo legado) ou cujo processo não pôde ser
+        inspecionado permanece ``running`` por segurança. A transição ainda é
+        condicionada ao mesmo ``attempt_id`` dentro do SQLite, protegendo uma
+        nova tentativa que tenha vencido uma corrida entre a leitura e a
+        atualização.
+        """
+
+        now = time.monotonic()
+        if not force and now - self._last_backfill_recovery_scan < _BACKFILL_RECOVERY_SCAN_SECONDS:
+            return
+        self._last_backfill_recovery_scan = now
+        if not catalog_db_path(self.backfill_data_root).exists():
+            return
+        try:
+            conn = self._backfill_catalog_conn_for_recovery()
+            rows = list_running_sessions(conn)
+        except Exception:
+            logger.exception("Falha ao consultar sessões órfãs no catálogo de backfill")
+            return
+
+        for row in rows:
+            owner_alive = self._catalog_owner_alive(row)
+            key = (row["source_id"], row["logical_id"], row["session_date"])
+            if owner_alive is True:
+                continue
+            if owner_alive is None:
+                if key not in self._unowned_running_warned:
+                    logger.warning(
+                        "Sessão running sem identidade de processo verificável foi preservada: %s/%s/%s",
+                        *key,
+                    )
+                    self._unowned_running_warned.add(key)
+                continue
+
+            attempt_id = row.get("attempt_id")
+            if not attempt_id:
+                continue
+            try:
+                catalog_interrupt_session(
+                    conn,
+                    source_id=row["source_id"],
+                    logical_id=row["logical_id"],
+                    session_date=row["session_date"],
+                    attempt_id=attempt_id,
+                    message="Recuperação automática: o processo proprietário não está mais ativo.",
+                )
+                final_path = (
+                    raw_partition_dir(
+                        self.backfill_data_root,
+                        source_id=row["source_id"],
+                        logical_id=row["logical_id"],
+                        session_date=row["session_date"],
+                    )
+                    / "ticks.parquet"
+                )
+                discard_partial(final_path.with_name(final_path.name + ".partial"))
+                self._unowned_running_warned.discard(key)
+                logger.info("Sessão órfã recuperada automaticamente: %s/%s/%s", *key)
+            except Exception:
+                logger.exception("Falha ao recuperar sessão órfã de backfill: %s/%s/%s", *key)
 
     def _interrupt_backfills_for_terminal(self, terminal_id: str, message: str) -> None:
         """Marca backfills pendentes/em execução como interrompidos e libera

@@ -128,6 +128,9 @@ def start_backfill_job(
     request: BackfillSessionRequest,
     resolved_symbol: str,
     fetch_chunk: Callable[[TickWindow], Sequence[TickRecord]],
+    owner_pid: int | None = None,
+    owner_process_started_at: float | None = None,
+    owner_terminal_id: str | None = None,
     now: Callable[[], datetime] = lambda: datetime.now(UTC),
 ) -> tuple[dict[str, Any] | None, BackfillSessionResult | None]:
     """Reserva a sessão no catálogo e abre o escritor parcial.
@@ -302,6 +305,9 @@ def start_backfill_job(
             requested_start_utc=window.start_utc,
             requested_end_utc=window.end_utc,
             rebuild=request.rebuild,
+            owner_pid=owner_pid,
+            owner_process_started_at=owner_process_started_at,
+            owner_terminal_id=owner_terminal_id,
         )
     except catalog.CatalogStateError as exc:
         # Classificação fiel (correção de auditoria): só os dois prefixos
@@ -442,6 +448,9 @@ def run_session_backfill(
     request: BackfillSessionRequest,
     resolved_symbol: str,
     fetch_chunk: Callable[[TickWindow], Sequence[TickRecord]],
+    owner_pid: int | None = None,
+    owner_process_started_at: float | None = None,
+    owner_terminal_id: str | None = None,
     should_stop: Callable[[], bool] = lambda: False,
     now: Callable[[], datetime] = lambda: datetime.now(UTC),
 ) -> BackfillSessionResult:
@@ -458,6 +467,9 @@ def run_session_backfill(
         request=request,
         resolved_symbol=resolved_symbol,
         fetch_chunk=fetch_chunk,
+        owner_pid=owner_pid,
+        owner_process_started_at=owner_process_started_at,
+        owner_terminal_id=owner_terminal_id,
         now=now,
     )
     if job is None:

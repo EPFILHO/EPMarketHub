@@ -104,6 +104,13 @@ limites de `chunk_seconds`) em vez de duplicar essas regras já validadas.
 Backfill, fluxo ao vivo e diagnóstico de ticks são mutuamente exclusivos no
 mesmo worker — ver `docs/KERNEL_PROTOCOL.md`.
 
+Desde o schema de catálogo v2, cada tentativa `running` registra a identidade
+do processo proprietário (`owner_pid`, instante de criação e terminal). O
+supervisor pode assim recuperar automaticamente sessões após uma queda total
+sem confundir ausência temporária de heartbeat com morte e sem tomar uma
+tentativa pertencente a processo ainda vivo. Catálogos v1 são migrados sem
+perda; linhas legadas sem identidade permanecem conservadoramente intocadas.
+
 O Portão A implementa e testa contratos, escritor, catálogo e comando/
 eventos com fontes falsas em diretórios temporários; nenhuma coleta real,
 GUI ou integração com `D:\EP\EPMarketHub` acontece nesta fatia — ver

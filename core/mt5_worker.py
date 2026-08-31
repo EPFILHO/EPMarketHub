@@ -472,6 +472,8 @@ def mt5_worker_main(
     active_backfill: dict[str, Any] | None = None
     backfill_data_root_path = Path(backfill_data_root) if backfill_data_root else Path(DEFAULT_MARKET_DATA_ROOT)
     backfill_catalog_conn = None
+    worker_pid = os.getpid()
+    worker_process_started_at = psutil.Process(worker_pid).create_time()
 
     _emit(
         event_queue,
@@ -743,6 +745,9 @@ def mt5_worker_main(
                                         fetch_chunk=_make_backfill_fetch_chunk(
                                             connector, resolved_symbol, backfill_request.tick_type
                                         ),
+                                        owner_pid=worker_pid,
+                                        owner_process_started_at=worker_process_started_at,
+                                        owner_terminal_id=profile.id,
                                     )
                                     if job is None:
                                         assert immediate is not None

@@ -10,7 +10,12 @@ from core.models import TerminalProfile
 from core.worker_manager import MT5WorkerManager
 from core.worker_protocol import WORKER_PROTOCOL_VERSION
 from market_analytics.backfill_catalog import begin_attempt, get_session, open_catalog
-from market_analytics.tick_backfill import BackfillSessionRequest, catalog_db_path
+from market_analytics.backfill_runner import run_session_backfill
+from market_analytics.tick_backfill import (
+    BackfillSessionRequest,
+    catalog_db_path,
+    raw_partition_dir,
+)
 
 SESSION_DATE = date(2026, 8, 28)
 
@@ -349,14 +354,173 @@ def test_unresponsive_worker_never_releases_backfill_catalog_ownership(
     # foi tocado (o worker segue vivo e dono da sessão).
     status = manager.backfill_status("bf-1")
     assert status["state"] == "running"
-    assert manager._backfill_catalog_conn is None
-
     verify_conn = open_catalog(catalog_db_path(tmp_path))
     row = get_session(
         verify_conn, source_id=request.source_id, logical_id=request.logical_id, session_date=request.session_date
     )
     assert row["state"] == "running"
     assert row["attempt_id"] == started["attempt_id"]
+
+
+def test_restarted_manager_recovers_dead_catalog_owner_and_discards_partial(
+    manager: MT5WorkerManager, tmp_path: Path, monkeypatch
+) -> None:
+    request = make_request()
+    conn = open_catalog(catalog_db_path(tmp_path))
+    started = begin_attempt(
+        conn,
+        source_id=request.source_id,
+        logical_id=request.logical_id,
+        session_date=request.session_date,
+        session_timezone=request.session_timezone,
+        tick_type=request.tick_type,
+        requested_start_utc=request.session_window().start_utc,
+        requested_end_utc=request.session_window().end_utc,
+        rebuild=False,
+        owner_pid=9876,
+        owner_process_started_at=1234.5,
+        owner_terminal_id="clear-main",
+    )
+    partial = (
+        raw_partition_dir(
+            tmp_path,
+            source_id=request.source_id,
+            logical_id=request.logical_id,
+            session_date=request.session_date,
+        )
+        / "ticks.parquet.partial"
+    )
+    partial.parent.mkdir(parents=True, exist_ok=True)
+    partial.write_bytes(b"incomplete")
+    conn.close()
+    monkeypatch.setattr(manager, "_catalog_owner_alive", lambda _row: False)
+
+    manager._recover_orphaned_catalog_sessions(force=True)
+
+    verify_conn = open_catalog(catalog_db_path(tmp_path))
+    recovered = get_session(
+        verify_conn,
+        source_id=request.source_id,
+        logical_id=request.logical_id,
+        session_date=request.session_date,
+    )
+    assert recovered["state"] == "interrupted"
+    assert recovered["attempt_id"] == started["attempt_id"]
+    assert recovered["error_message"].startswith("Recuperação automática")
+    assert not partial.exists()
+
+
+def test_restarted_manager_preserves_a_live_catalog_owner(
+    manager: MT5WorkerManager, tmp_path: Path, monkeypatch
+) -> None:
+    request = make_request()
+    conn = open_catalog(catalog_db_path(tmp_path))
+    started = begin_attempt(
+        conn,
+        source_id=request.source_id,
+        logical_id=request.logical_id,
+        session_date=request.session_date,
+        session_timezone=request.session_timezone,
+        tick_type=request.tick_type,
+        requested_start_utc=request.session_window().start_utc,
+        requested_end_utc=request.session_window().end_utc,
+        rebuild=False,
+        owner_pid=9876,
+        owner_process_started_at=1234.5,
+        owner_terminal_id="clear-main",
+    )
+    conn.close()
+    monkeypatch.setattr(manager, "_catalog_owner_alive", lambda _row: True)
+
+    manager._recover_orphaned_catalog_sessions(force=True)
+
+    verify_conn = open_catalog(catalog_db_path(tmp_path))
+    preserved = get_session(
+        verify_conn,
+        source_id=request.source_id,
+        logical_id=request.logical_id,
+        session_date=request.session_date,
+    )
+    assert preserved["state"] == "running"
+    assert preserved["attempt_id"] == started["attempt_id"]
+
+
+def test_owner_pid_reuse_is_detected_by_process_creation_time(monkeypatch) -> None:
+    class ReusedPidProcess:
+        def is_running(self) -> bool:
+            return True
+
+        def create_time(self) -> float:
+            return 2000.0
+
+    monkeypatch.setattr("core.worker_manager.psutil.Process", lambda _pid: ReusedPidProcess())
+
+    assert (
+        MT5WorkerManager._catalog_owner_alive(
+            {"owner_pid": 9876, "owner_process_started_at": 1000.0}
+        )
+        is False
+    )
+
+
+def test_restart_recovers_a_promoted_file_left_running_after_catalog_failure(
+    manager: MT5WorkerManager, tmp_path: Path, monkeypatch
+) -> None:
+    import market_analytics.backfill_runner as runner_module
+
+    request = make_request()
+    conn = open_catalog(catalog_db_path(tmp_path))
+
+    def catalog_failure(*args, **kwargs):
+        raise runner_module.catalog.CatalogStateError("sqlite_error: falha simulada após promoção")
+
+    with monkeypatch.context() as failure_patch:
+        failure_patch.setattr(runner_module.catalog, "complete_session", catalog_failure)
+        failure_patch.setattr(runner_module.catalog, "fail_session", catalog_failure)
+        failed = run_session_backfill(
+            conn=conn,
+            data_root=tmp_path,
+            request=request,
+            resolved_symbol="WIN$",
+            fetch_chunk=lambda _window: [],
+            owner_pid=9876,
+            owner_process_started_at=1234.5,
+            owner_terminal_id="clear-main",
+        )
+
+    assert failed.state == "failed"
+    assert failed.error_reason == "catalog_error"
+    assert failed.promoted is not None and failed.promoted.path.exists()
+    stuck = get_session(
+        conn,
+        source_id=request.source_id,
+        logical_id=request.logical_id,
+        session_date=request.session_date,
+    )
+    assert stuck["state"] == "running"
+    conn.close()
+
+    monkeypatch.setattr(manager, "_catalog_owner_alive", lambda _row: False)
+    manager._recover_orphaned_catalog_sessions(force=True)
+
+    resumed_conn = open_catalog(catalog_db_path(tmp_path))
+    resumed = run_session_backfill(
+        conn=resumed_conn,
+        data_root=tmp_path,
+        request=request,
+        resolved_symbol="WIN$",
+        fetch_chunk=lambda _window: (_ for _ in ()).throw(AssertionError("não deve baixar novamente")),
+    )
+    recovered = get_session(
+        resumed_conn,
+        source_id=request.source_id,
+        logical_id=request.logical_id,
+        session_date=request.session_date,
+    )
+    assert resumed.error_reason == "already_completed"
+    assert recovered["state"] == "empty"
+    assert recovered["reconciled"] == 1
+    assert recovered["sha256"] == failed.promoted.sha256
 
 
 def test_dead_worker_recovers_a_lost_accepted_event_from_the_catalog_itself(

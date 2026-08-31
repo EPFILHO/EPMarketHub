@@ -8,7 +8,7 @@ biblioteca padrão.
 Fronteira arquitetural: ver `docs/MARKET_ANALYTICS.md`.
 """
 
-from .backfill_catalog import CatalogStateError, new_attempt_id, open_catalog
+from .backfill_catalog import CatalogStateError, list_running_sessions, new_attempt_id, open_catalog
 from .backfill_runner import (
     BackfillSessionResult,
     BackfillSourceError,
@@ -98,6 +98,7 @@ __all__ = [
     "recompute_summary_from_file",
     "CatalogStateError",
     "new_attempt_id",
+    "list_running_sessions",
     "open_catalog",
     "BackfillSessionResult",
     "BackfillSourceError",

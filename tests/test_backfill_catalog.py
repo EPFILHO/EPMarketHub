@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+import market_analytics.backfill_catalog as catalog_module
 from market_analytics.backfill_catalog import (
     CatalogStateError,
     begin_attempt,
@@ -14,6 +15,7 @@ from market_analytics.backfill_catalog import (
     fail_session,
     get_session,
     interrupt_session,
+    list_running_sessions,
     open_catalog,
     reconcile_session,
 )
@@ -52,6 +54,39 @@ def _summary(total_count: int = 2):
     )
 
 
+def test_open_catalog_migrates_v1_owner_columns_without_losing_rows(tmp_path: Path) -> None:
+    db_path = tmp_path / "catalog" / "collection.sqlite3"
+    db_path.parent.mkdir(parents=True)
+    legacy_schema = catalog_module._SCHEMA_SQL
+    for definition in (
+        "    owner_pid INTEGER,\n",
+        "    owner_process_started_at REAL,\n",
+        "    owner_terminal_id TEXT,\n",
+    ):
+        legacy_schema = legacy_schema.replace(definition, "")
+    legacy = sqlite3.connect(db_path)
+    legacy.execute(legacy_schema)
+    legacy.execute(
+        """
+        INSERT INTO backfill_sessions (
+            source_id, logical_id, session_date, session_timezone, tick_type,
+            state, attempts, catalog_schema_version, created_at, updated_at
+        ) VALUES ('clear', 'win', '2026-08-28', 'America/Sao_Paulo', 'all',
+                  'interrupted', 1, 1, '2026-08-30T00:00:00+00:00', '2026-08-30T00:00:00+00:00')
+        """
+    )
+    legacy.commit()
+    legacy.close()
+
+    migrated = open_catalog(db_path)
+
+    columns = {row[1] for row in migrated.execute("PRAGMA table_info(backfill_sessions)")}
+    assert catalog_module._SCHEMA_V2_COLUMNS.keys() <= columns
+    row = get_session(migrated, source_id="clear", logical_id="win", session_date=date(2026, 8, 28))
+    assert row["state"] == "interrupted"
+    assert row["owner_pid"] is None
+
+
 def test_begin_attempt_creates_a_running_row(tmp_path: Path) -> None:
     conn = _conn(tmp_path)
 
@@ -71,6 +106,66 @@ def test_begin_attempt_creates_a_running_row(tmp_path: Path) -> None:
     assert row["attempts"] == 1
     assert row["session_date"] == date(2026, 8, 28)
     assert row["attempt_id"]  # gerado, opaco, não vazio
+
+
+def test_begin_attempt_persists_process_owner_identity(tmp_path: Path) -> None:
+    conn = _conn(tmp_path)
+
+    row = begin_attempt(
+        conn,
+        source_id="clear",
+        logical_id="win",
+        session_date=date(2026, 8, 28),
+        session_timezone="America/Sao_Paulo",
+        tick_type="all",
+        requested_start_utc=WINDOW.start_utc,
+        requested_end_utc=WINDOW.end_utc,
+        rebuild=False,
+        owner_pid=4321,
+        owner_process_started_at=1234.5,
+        owner_terminal_id="clear-main",
+    )
+
+    assert row["owner_pid"] == 4321
+    assert row["owner_process_started_at"] == 1234.5
+    assert row["owner_terminal_id"] == "clear-main"
+    assert list_running_sessions(conn) == [row]
+
+
+@pytest.mark.parametrize(
+    ("owner_pid", "owner_process_started_at", "owner_terminal_id"),
+    [
+        (4321, None, "clear-main"),
+        (None, 1234.5, "clear-main"),
+        (True, 1234.5, "clear-main"),
+        (4321, True, "clear-main"),
+        (4321, 1234.5, ""),
+        (None, None, "clear-main"),
+    ],
+)
+def test_begin_attempt_rejects_incomplete_or_invalid_owner_identity(
+    tmp_path: Path,
+    owner_pid,
+    owner_process_started_at,
+    owner_terminal_id,
+) -> None:
+    conn = _conn(tmp_path)
+
+    with pytest.raises(ValueError):
+        begin_attempt(
+            conn,
+            source_id="clear",
+            logical_id="win",
+            session_date=date(2026, 8, 28),
+            session_timezone="America/Sao_Paulo",
+            tick_type="all",
+            requested_start_utc=WINDOW.start_utc,
+            requested_end_utc=WINDOW.end_utc,
+            rebuild=False,
+            owner_pid=owner_pid,
+            owner_process_started_at=owner_process_started_at,
+            owner_terminal_id=owner_terminal_id,
+        )
 
 
 def test_begin_attempt_generates_a_new_attempt_id_on_every_call(tmp_path: Path) -> None:
