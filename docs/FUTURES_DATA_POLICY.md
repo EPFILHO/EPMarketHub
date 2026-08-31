@@ -104,14 +104,16 @@ naturalmente outra partição e o anterior não é sobrescrito.
 
 `WIN$` continua sendo a referência proporcional preferida para regimes. O
 histórico de `WDO$` observado na Clear contém vazios relevantes e não pode
-ser tratado como série completa. Até existir uma fonte melhor:
+ser tratado como série completa. Por decisão do C3 em 31/08/2026:
 
-- `WDO@` é a referência proporcional alternativa para pesquisa de regime;
-- `WDO$D` é a referência por liquidez para variáveis em pontos;
-- ambos conservam identidade de fonte/método e não são unidos
-  silenciosamente;
-- os contratos individuais coletados daqui em diante prevalecem sobre as
-  referências sintéticas no período coberto.
+- o backfill histórico amplo será feito somente para `WIN$`;
+- `WDO$`, `WDO@` e `WDO$D` não serão usados para fabricar uma história
+  canônica nem unidos para esconder lacunas;
+- as amostras já coletadas permanecem preservadas como evidência separada;
+- a base canônica de WDO será prospectiva, formada pelos contratos
+  individuais capturados diariamente (com sementes em 28 e 31/08/2026);
+- `WDO@` e `WDO$D` só poderão voltar como referências de pesquisa sob uma
+  ordem futura própria, mantendo identidade de fonte/método.
 
 ## Automação aprovada
 
