@@ -18,6 +18,49 @@ def build_initialized_connector(account_login: str = "") -> MT5Connector:
     return connector
 
 
+def test_symbol_states_expose_futures_expiration_and_session_liquidity(monkeypatch) -> None:
+    row = SimpleNamespace(
+        name="WINV26",
+        description="IBOVESPA MINI",
+        trade_mode=4,
+        visible=True,
+        select=True,
+        bid=177_700.0,
+        ask=177_705.0,
+        last=177_700.0,
+        start_time=1_770_000_000,
+        expiration_time=1_782_000_000,
+        session_volume=123_456.0,
+        session_deals=78_900,
+        session_turnover=987_654_321.0,
+    )
+    fake_mt5 = SimpleNamespace(
+        symbols_get=lambda: (row,),
+        SYMBOL_TRADE_MODE_DISABLED=0,
+    )
+    monkeypatch.setattr("core.mt5_connector.mt5", fake_mt5)
+
+    states = build_initialized_connector().list_symbol_states()
+
+    assert states["WINV26"] == {
+        "name": "WINV26",
+        "description": "IBOVESPA MINI",
+        "trade_mode": 4,
+        "tradable": True,
+        "visible": True,
+        "selected": True,
+        "has_quote": True,
+        "bid": 177_700.0,
+        "ask": 177_705.0,
+        "last": 177_700.0,
+        "start_time": 1_770_000_000,
+        "expiration_time": 1_782_000_000,
+        "session_volume": 123_456.0,
+        "session_deals": 78_900,
+        "session_turnover": 987_654_321.0,
+    }
+
+
 def test_ipc_failure_is_not_reported_as_missing_login(monkeypatch) -> None:
     fake_mt5 = SimpleNamespace(
         account_info=lambda: None,

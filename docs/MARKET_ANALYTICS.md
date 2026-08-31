@@ -115,3 +115,18 @@ O Portão A implementa e testa contratos, escritor, catálogo e comando/
 eventos com fontes falsas em diretórios temporários; nenhuma coleta real,
 GUI ou integração com `D:\EP\EPMarketHub` acontece nesta fatia — ver
 `docs/work_orders/DEV-002.md`.
+
+## Contratos futuros e proveniência (DEV-003)
+
+A política atual de futuros está em `docs/FUTURES_DATA_POLICY.md`. A camada
+bruta distingue contratos individuais de todas as combinações contínuas de
+rolagem (liquidez/vencimento) e ajuste (proporcional/diferença). Essa
+proveniência acompanha a solicitação, sua impressão digital e os metadados
+do Parquet; uma retomada recusa um artefato cuja semântica não corresponda à
+solicitação atual.
+
+`market_analytics/futures_series.py` contém a taxonomia e a seleção pura do
+contrato B3 atual. `market_analytics/daily_capture.py` decide apenas a sessão
+fechada. O controlador local `tools/b3_contract_capture_gui.py` usa esses
+contratos e a fundação de backfill existente; nenhuma IA participa da
+transferência dos ticks.

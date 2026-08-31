@@ -39,6 +39,25 @@ RAW_SCHEMA_VERSION = 1
 # catálogo, para auditoria — não é o protocolo do worker.
 BACKFILL_COLLECTOR_VERSION = "dev-002-gate-a"
 
+# Vocabulário fechado dos metadados opcionais de proveniência. Eles tornam
+# séries contínuas e contratos individuais distinguíveis no próprio Parquet,
+# sem alterar a compatibilidade dos artefatos v1 que ainda não os possuem.
+SERIES_METADATA_KEYS: frozenset[str] = frozenset(
+    {
+        "series_kind",
+        "instrument",
+        "source_symbol",
+        "roll_rule",
+        "adjustment_method",
+        "analytics_roles",
+        "contract_month",
+        "contract_expiration_utc",
+        "selection_reason",
+        "session_volume",
+        "session_deals",
+    }
+)
+
 # Uma sessão é o dia civil completo nesta timezone, convertido para limites
 # UTC timezone-aware. A ingestão bruta não fixa horário de pregão.
 SESSION_TIMEZONE = "America/Sao_Paulo"
@@ -201,6 +220,7 @@ class BackfillSessionRequest:
     session_timezone: str = SESSION_TIMEZONE
     chunk_seconds: int = DEFAULT_CHUNK_SECONDS
     rebuild: bool = False
+    series_metadata: tuple[tuple[str, str], ...] = ()
 
     def __post_init__(self) -> None:
         if not isinstance(self.request_id, str) or not self.request_id.strip():
@@ -232,6 +252,21 @@ class BackfillSessionRequest:
             )
         if not isinstance(self.rebuild, bool):
             raise ValueError(f"rebuild deve ser booleano (recebido: {self.rebuild!r})")
+        normalized_metadata: list[tuple[str, str]] = []
+        seen_metadata: set[str] = set()
+        for item in self.series_metadata:
+            if not isinstance(item, tuple | list) or len(item) != 2:
+                raise ValueError("series_metadata deve conter pares (chave, valor)")
+            key, value = item
+            if not isinstance(key, str) or key not in SERIES_METADATA_KEYS:
+                raise ValueError(f"chave de series_metadata inválida: {key!r}")
+            if key in seen_metadata:
+                raise ValueError(f"chave duplicada em series_metadata: {key!r}")
+            if not isinstance(value, str) or not value.strip():
+                raise ValueError(f"valor inválido em series_metadata[{key!r}]: {value!r}")
+            seen_metadata.add(key)
+            normalized_metadata.append((key, value.strip()))
+        object.__setattr__(self, "series_metadata", tuple(sorted(normalized_metadata)))
         # Valida a conversão de fuso e a duração da sessão agora (aceita
         # 20h–28h, cobrindo transições reais de horário de verão), para
         # recusar cedo uma combinação data/fuso absurda.
@@ -260,6 +295,7 @@ class BackfillSessionRequest:
             "session_timezone": self.session_timezone,
             "chunk_seconds": self.chunk_seconds,
             "rebuild": self.rebuild,
+            "series_metadata": dict(self.series_metadata),
         }
         text = json.dumps(payload, sort_keys=True, ensure_ascii=False)
         return hashlib.sha256(text.encode("utf-8")).hexdigest()
@@ -275,6 +311,7 @@ class BackfillSessionRequest:
             "session_timezone": self.session_timezone,
             "chunk_seconds": self.chunk_seconds,
             "rebuild": self.rebuild,
+            "series_metadata": dict(self.series_metadata),
         }
 
     @classmethod
@@ -317,6 +354,12 @@ class BackfillSessionRequest:
         if not isinstance(rebuild_raw, bool):
             raise ValueError(f"rebuild deve ser booleano (recebido: {rebuild_raw!r})")
 
+        series_metadata_raw = data.get("series_metadata", {})
+        if not isinstance(series_metadata_raw, dict):
+            raise ValueError(
+                f"series_metadata deve ser um objeto (recebido: {series_metadata_raw!r})"
+            )
+
         return cls(
             request_id=_str_field("request_id", ""),
             source_id=_str_field("source_id", ""),
@@ -327,6 +370,7 @@ class BackfillSessionRequest:
             session_timezone=_str_field("session_timezone", SESSION_TIMEZONE) or SESSION_TIMEZONE,
             chunk_seconds=chunk_seconds_raw,
             rebuild=rebuild_raw,
+            series_metadata=tuple(series_metadata_raw.items()),
         )
 
 
@@ -398,7 +442,7 @@ def build_raw_metadata(
         raise ValueError(f"attempt_id não pode ser vazio (recebido: {attempt_id!r})")
 
     window = request.session_window()
-    return {
+    metadata = {
         "schema": "ep_market_hub.raw_ticks",
         "schema_version": str(RAW_SCHEMA_VERSION),
         "source_id": request.source_id,
@@ -413,6 +457,8 @@ def build_raw_metadata(
         "collector_version": BACKFILL_COLLECTOR_VERSION,
         "attempt_id": attempt_id.strip(),
     }
+    metadata.update({f"series_{key}": value for key, value in request.series_metadata})
+    return metadata
 
 
 class ArtifactIdentityError(ValueError):
@@ -515,6 +561,15 @@ def validate_artifact_identity(metadata: dict[str, Any], *, request: BackfillSes
 
     attempt_id = _require("attempt_id")
     resolved_symbol = _require("resolved_symbol")
+
+    for key, expected_value in request.series_metadata:
+        metadata_key = f"series_{key}"
+        actual_value = _require(metadata_key)
+        if actual_value != expected_value:
+            raise ArtifactIdentityError(
+                f"{metadata_key} do arquivo diverge da solicitação: "
+                f"esperado {expected_value!r}, encontrado {actual_value!r}"
+            )
 
     return ArtifactIdentity(
         resolved_symbol=resolved_symbol,

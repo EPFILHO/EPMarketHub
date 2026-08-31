@@ -287,6 +287,7 @@ class MT5Connector:
             )
             result[name] = {
                 "name": name,
+                "description": getattr(row, "description", None),
                 "trade_mode": trade_mode,
                 "tradable": trade_mode is None or trade_mode != disabled_mode,
                 "visible": bool(getattr(row, "visible", False)),
@@ -295,6 +296,13 @@ class MT5Connector:
                 "bid": bid,
                 "ask": ask,
                 "last": last,
+                # Metadados necessários para escolher e auditar contratos
+                # futuros sem inferir vencimento/liquidez pelo nome apenas.
+                "start_time": getattr(row, "start_time", None),
+                "expiration_time": getattr(row, "expiration_time", None),
+                "session_volume": getattr(row, "session_volume", None),
+                "session_deals": getattr(row, "session_deals", None),
+                "session_turnover": getattr(row, "session_turnover", None),
             }
         return result
 

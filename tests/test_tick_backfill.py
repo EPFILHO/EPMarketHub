@@ -98,6 +98,66 @@ def test_fingerprint_is_stable_for_equivalent_requests() -> None:
     assert a.fingerprint() == b.fingerprint()
 
 
+def test_series_provenance_round_trips_and_changes_identity() -> None:
+    provenance = (
+        ("series_kind", "individual_contract"),
+        ("instrument", "win"),
+        ("source_symbol", "WINV26"),
+        ("roll_rule", "none"),
+        ("adjustment_method", "none"),
+        ("analytics_roles", "execution_truth,point_calibration"),
+    )
+    request = _make_request(
+        logical_id="win_contract_winv26",
+        aliases=("WINV26",),
+        series_metadata=provenance,
+    )
+
+    restored = BackfillSessionRequest.from_dict(request.to_dict())
+
+    assert restored == request
+    assert restored.fingerprint() != _make_request(
+        logical_id="win_contract_winv26", aliases=("WINV26",)
+    ).fingerprint()
+
+
+def test_series_provenance_is_embedded_and_validated() -> None:
+    request = _make_request(
+        logical_id="wdo_contract_wdou26",
+        aliases=("WDOU26",),
+        series_metadata=(
+            ("series_kind", "individual_contract"),
+            ("instrument", "wdo"),
+            ("source_symbol", "WDOU26"),
+            ("roll_rule", "none"),
+            ("adjustment_method", "none"),
+            ("analytics_roles", "execution_truth"),
+            ("contract_month", "2026-09-01"),
+        ),
+    )
+    metadata = build_raw_metadata(
+        request=request,
+        resolved_symbol="WDOU26",
+        collected_at=datetime(2026, 8, 31, 12, tzinfo=UTC),
+        attempt_id="attempt-provenance",
+    )
+
+    assert metadata["series_adjustment_method"] == "none"
+    assert metadata["series_contract_month"] == "2026-09-01"
+    validate_artifact_identity(metadata, request=request)
+
+    metadata["series_adjustment_method"] = "difference"
+    with pytest.raises(ArtifactIdentityError, match="series_adjustment_method"):
+        validate_artifact_identity(metadata, request=request)
+
+
+def test_series_provenance_rejects_unknown_or_non_string_values() -> None:
+    with pytest.raises(ValueError, match="chave"):
+        _make_request(series_metadata=(("secret_rule", "x"),))
+    with pytest.raises(ValueError, match="valor"):
+        _make_request(series_metadata=(("instrument", 123),))
+
+
 def test_raw_partition_dir_matches_documented_layout() -> None:
     path = raw_partition_dir(
         Path("D:/EPData/MarketHub"),
