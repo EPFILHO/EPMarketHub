@@ -8,7 +8,7 @@ import threading
 import time
 import tkinter as tk
 import traceback
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from pathlib import Path
 from tkinter import messagebox, ttk
 from typing import Any
@@ -67,6 +67,34 @@ class CaptureFailure(RuntimeError):
     pass
 
 
+def determine_exit_code(kind: str, payload: Any) -> int:
+    """Decide o exit code do processo a partir do evento terminal da captura.
+
+    Extraída de ``CaptureWindow.poll`` para ser testável sem uma janela Tk
+    real: 0 apenas para ``"done"`` sem issues críticas em
+    ``report["issues"]``; ``"cancelled"``, ``"error"`` ou um ``"done"`` com
+    issues são sempre 1 — sucesso real é o único caminho para 0.
+    """
+
+    if kind == "done":
+        issues = payload["report"].get("issues") or []
+        return 1 if issues else 0
+    return 1
+
+
+def scheduled_close_delay_ms(has_issues: bool) -> int:
+    """Atraso (ms) até a janela agendada se fechar sozinha após um "done".
+
+    Extraída de ``CaptureWindow.poll`` pela mesma razão de
+    ``determine_exit_code``: um "done" com issues críticas usa o mesmo
+    prazo de inspeção de 2 minutos de um ``"error"`` — nunca os 30s de um
+    sucesso real, que dariam pouco tempo para notar o problema antes de a
+    janela fechar sozinha.
+    """
+
+    return 120_000 if has_issues else 30_000
+
+
 def atomic_write_json(destination: Path, payload: dict[str, Any]) -> None:
     destination.parent.mkdir(parents=True, exist_ok=True)
     partial = destination.with_suffix(destination.suffix + ".partial")
@@ -123,12 +151,48 @@ class ContractCaptureRunner:
         self.results: list[dict[str, Any]] = []
         self.plan: tuple[DailyCaptureSession, ...] = ()
         self.skipped_contracts: list[dict[str, Any]] = []
+        # Issues estruturadas e não-fatais: instrumento sem candidato atual,
+        # contrato rastreado que sumiu antes da sessão de vencimento, ou
+        # seleção recusada pela corretora. Nunca impedem a captura dos
+        # demais instrumentos, mas tornam a execução um "sucesso com
+        # ressalvas" — ver CaptureWindow.exit_code.
+        self.issues: list[dict[str, Any]] = []
         self.active_job: dict[str, Any] | None = None
 
     def emit(self, kind: str, payload: Any) -> None:
         self.events.put((kind, payload))
 
-    def connect_and_plan(self) -> dict[str, Any]:
+    @staticmethod
+    def catalog_confirmed_symbols(conn, tracker: dict[str, Any], session_date: date) -> frozenset[str]:
+        """Símbolos cuja sessão pedida já está completed/empty e verificada.
+
+        Evidência vem só do catálogo (nunca inferência): consulta cada
+        símbolo já conhecido pelo registro e confirma hash/contagem/tamanho
+        via `verify_row`, o mesmo caminho usado para o fast path
+        `already_completed`. Sem isso, reexecutar no mesmo dia depois de um
+        símbolo já capturado sumir do terminal geraria um falso
+        `missing_before_expiration`.
+        """
+
+        confirmed: set[str] = set()
+        for row in tracker.get("contracts", []):
+            symbol = row.get("symbol")
+            logical_id = row.get("logical_id")
+            if not symbol or not logical_id:
+                continue
+            catalog_row = get_session(
+                conn, source_id="clear", logical_id=logical_id, session_date=session_date
+            )
+            if catalog_row is None or catalog_row["state"] not in {"completed", "empty"}:
+                continue
+            try:
+                ContractCaptureRunner.verify_row(catalog_row)
+            except CaptureFailure:
+                continue
+            confirmed.add(symbol)
+        return frozenset(confirmed)
+
+    def connect_and_plan(self, conn) -> dict[str, Any]:
         if not CLEAR_EXE.exists():
             raise CaptureFailure(f"Terminal Clear não encontrado: {CLEAR_EXE}")
         if not mt5.initialize(path=str(CLEAR_EXE), portable=False, timeout=60_000):
@@ -146,23 +210,42 @@ class ContractCaptureRunner:
             now_utc=now_utc,
             session_date=session_date,
         )
+        # Ausência de candidato atual para UM instrumento nunca aborta o
+        # outro: vira issue crítica visível no relatório, e o instrumento
+        # simplesmente fica de fora do plano desta execução.
         found_roots = {item.selection.spec.instrument for item in active_plan}
-        missing = sorted({"win", "wdo"} - found_roots)
-        if missing:
-            raise CaptureFailure(
-                "Não foi possível selecionar com segurança o contrato atual de: "
-                + ", ".join(root.upper() for root in missing)
+        for root in sorted({"win", "wdo"} - found_roots):
+            self.issues.append(
+                {
+                    "type": "no_current_candidate",
+                    "symbol": None,
+                    "instrument": root,
+                    "logical_id": None,
+                    "session_date": session_date.isoformat(),
+                    "message": (
+                        f"Nenhum contrato {root.upper()} elegível foi observado nesta execução; "
+                        "instrumento pulado sem afetar os demais."
+                    ),
+                }
             )
+            self.emit("log", self.issues[-1]["message"])
+
+        tracker_before = load_tracker()
+        confirmed_symbols = self.catalog_confirmed_symbols(conn, tracker_before, session_date)
         try:
-            self.plan, tracker = update_contract_tracker(
-                load_tracker(),
+            self.plan, tracker, tracker_issues = update_contract_tracker(
+                tracker_before,
                 active_plan,
                 states,
                 now_utc=now_utc,
                 session_date=session_date,
+                catalog_confirmed_symbols=confirmed_symbols,
             )
         except ValueError as exc:
             raise CaptureFailure(f"Registro de contratos incompatível: {exc}") from exc
+        for issue in tracker_issues:
+            self.issues.append(issue)
+            self.emit("log", issue["message"])
         # Persiste a descoberta antes do download: uma queda não pode fazer o
         # sistema esquecer que um novo contrato já entrou em acompanhamento.
         atomic_write_json(TRACKER_PATH, tracker)
@@ -180,7 +263,30 @@ class ContractCaptureRunner:
                         f"Contrato anterior indisponível na fonte: {item.selection.spec.symbol}",
                     )
                     continue
-                raise CaptureFailure(f"A Clear recusou selecionar {item.selection.spec.symbol}.")
+                # A recusa em selecionar o contrato ATUAL de um instrumento
+                # também não pode mais abortar o outro: vira issue crítica e
+                # esse instrumento fica de fora desta execução.
+                skipped = {
+                    **item.to_dict(),
+                    "reason": "broker_refused_current_symbol_selection",
+                }
+                self.skipped_contracts.append(skipped)
+                self.issues.append(
+                    {
+                        "type": "symbol_select_refused",
+                        "symbol": item.selection.spec.symbol,
+                        "instrument": item.selection.spec.instrument,
+                        "logical_id": item.selection.spec.logical_id,
+                        "session_date": item.session_date.isoformat(),
+                        "message": (
+                            "A Clear recusou selecionar o contrato atual "
+                            f"{item.selection.spec.symbol}; "
+                            f"{item.selection.spec.instrument.upper()} pulado nesta execução."
+                        ),
+                    }
+                )
+                self.emit("log", self.issues[-1]["message"])
+                continue
             selectable_plan.append(item)
             self.emit("planned", item.to_dict())
         self.plan = tuple(selectable_plan)
@@ -282,6 +388,32 @@ class ContractCaptureRunner:
             "reused": reused,
             "attempts_used_this_run": attempts_used,
             "elapsed_seconds": round(elapsed_seconds, 3),
+        }
+
+    @staticmethod
+    def result_from_issue(issue: dict[str, Any]) -> dict[str, Any]:
+        """Resultado operacional não-sucedido para uma issue com contrato identificado.
+
+        Garante que uma issue crítica como ``missing_before_expiration``
+        apareça em ``results``/``summary`` como uma sessão que falhou — nunca
+        apenas como uma linha isolada em ``issues`` fácil de não perceber.
+        """
+
+        return {
+            "logical_id": issue["logical_id"],
+            "symbol": issue["symbol"],
+            "session_date": issue["session_date"],
+            "provenance": {},
+            "selection_evidence": {},
+            "source_id": "clear",
+            "state": issue["type"],
+            "tick_count": 0,
+            "file_path": None,
+            "file_size_bytes": 0,
+            "sha256": None,
+            "reused": False,
+            "attempts_used_this_run": 0,
+            "elapsed_seconds": 0.0,
         }
 
     def run_session(self, conn, session: DailyCaptureSession, session_index: int) -> dict[str, Any]:
@@ -394,7 +526,13 @@ class ContractCaptureRunner:
             conn = open_catalog(catalog_db_path(DATA_ROOT))
             self.recover_dead_sessions(conn)
             self.emit("status", "Conectando à Clear e selecionando contratos...")
-            terminal = self.connect_and_plan()
+            terminal = self.connect_and_plan(conn)
+            # Uma issue "missing_before_expiration" identifica um contrato e
+            # uma sessão específicos: vira também um resultado operacional
+            # não-sucedido, visível em results/summary, não só em issues.
+            for issue in self.issues:
+                if issue["type"] == "missing_before_expiration":
+                    self.results.append(self.result_from_issue(issue))
             for index, session in enumerate(self.plan):
                 self.emit(
                     "status",
@@ -418,6 +556,7 @@ class ContractCaptureRunner:
                 "terminal": terminal,
                 "plan": [item.to_dict() for item in self.plan],
                 "skipped_contracts": self.skipped_contracts,
+                "issues": self.issues,
                 "tracker_path": str(TRACKER_PATH),
                 "results": self.results,
                 "summary": summary,
@@ -461,6 +600,11 @@ class CaptureWindow:
         self.events: queue.Queue[tuple[str, Any]] = queue.Queue()
         self.cancel_event = threading.Event()
         self.thread: threading.Thread | None = None
+        # Pessimista por padrão: só vira 0 diante de um "done" sem issues.
+        # Cancelamento, erro e uma janela nunca iniciada nunca são 0 — o
+        # Agendador do Windows só deve ver sucesso quando a captura de fato
+        # terminou sem ressalvas.
+        self.exit_code = 1
 
         frame = ttk.Frame(self.root, padding=16)
         frame.pack(fill="both", expand=True)
@@ -575,12 +719,34 @@ class CaptureWindow:
                     self.append_log(str(payload))
                 elif kind == "done":
                     self.finish_ui()
-                    self.status.configure(text="Captura concluída e auditada.")
+                    issues = payload["report"].get("issues") or []
+                    # Sucesso real (exit code 0) exige zero issues críticas;
+                    # "concluído com ressalvas" ainda é uma falha do ponto de
+                    # vista do Agendador, mesmo sem exceção.
+                    self.exit_code = determine_exit_code(kind, payload)
+                    if issues:
+                        self.status.configure(
+                            text=f"Captura concluída com {len(issues)} issue(s) — revisar relatório."
+                        )
+                    else:
+                        self.status.configure(text="Captura concluída e auditada.")
                     self.progress.configure(value=self.progress["maximum"])
                     self.root.bell()
                     if self.scheduled:
-                        self.append_log("Execução automática encerrará esta janela em 30 segundos.")
-                        self.root.after(30_000, self.root.destroy)
+                        delay_ms = scheduled_close_delay_ms(bool(issues))
+                        if issues:
+                            self.append_log(
+                                "A janela permanecerá aberta por 2 minutos para inspeção das issues."
+                            )
+                        else:
+                            self.append_log("Execução automática encerrará esta janela em 30 segundos.")
+                        self.root.after(delay_ms, self.root.destroy)
+                    elif issues:
+                        messagebox.showwarning(
+                            "Captura concluída com issues",
+                            "Contratos B3 processados, mas com issues que exigem atenção.\n\n"
+                            f"Relatório: {payload['report_path']}",
+                        )
                     else:
                         messagebox.showinfo(
                             "Captura concluída",
@@ -588,10 +754,15 @@ class CaptureWindow:
                             f"Relatório: {payload['report_path']}",
                         )
                 elif kind == "cancelled":
+                    self.exit_code = determine_exit_code(kind, payload)
                     self.finish_ui()
                     self.status.configure(text=str(payload))
                     self.root.bell()
+                    if self.scheduled:
+                        self.append_log("Execução automática cancelada; esta janela encerrará em 30 segundos.")
+                        self.root.after(30_000, self.root.destroy)
                 elif kind == "error":
+                    self.exit_code = determine_exit_code(kind, payload)
                     self.finish_ui()
                     self.status.configure(text="Falha na captura.")
                     self.append_log(payload["traceback"])
@@ -628,4 +799,8 @@ class CaptureWindow:
 
 
 if __name__ == "__main__":
-    CaptureWindow(scheduled="--scheduled" in sys.argv[1:]).run()
+    window = CaptureWindow(scheduled="--scheduled" in sys.argv[1:])
+    window.run()
+    # O lançador PowerShell aguarda este processo e repassa o exit code ao
+    # Agendador do Windows: 0 só em sucesso real, sem issues críticas.
+    sys.exit(window.exit_code)

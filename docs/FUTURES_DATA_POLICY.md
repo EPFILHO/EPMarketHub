@@ -67,6 +67,21 @@ capturado enquanto permanecer listado, negociável e não expirado. Essa
 sobreposição preserva o ciclo até o término e fornece evidência para definir
 depois a rolagem derivada. Contrato expirado ou indisponível permanece no
 registro com estado explícito; nunca é apagado nem substituído por outro nome.
+Se um contrato rastreado sumir do terminal **antes** de sua sessão de
+vencimento conhecida ter sido capturada, o registro usa o estado
+`missing_before_expiration` (em vez de `unavailable`) e uma issue estruturada
+é emitida — essa perda nunca fica silenciosa: aparece em `report["issues"]` e
+também como um resultado operacional não-sucedido em `report["results"]`. A
+única exceção é o próprio dia de vencimento: se essa sessão exata já estiver
+`completed`/`empty` e verificada no catálogo, sumir é o término normal do
+ciclo (`expired`), não uma perda — mas em qualquer sessão **antes** do
+vencimento real, mesmo já arquivada no catálogo, ainda faltam sessões
+futuras obrigatórias e o desaparecimento continua `missing_before_expiration`.
+
+Falha ao selecionar o contrato atual de UM instrumento (WIN ou WDO) — seja
+por não haver candidato elegível, seja por a corretora recusar a seleção —
+também vira issue estruturada, mas nunca aborta o outro instrumento: cada um
+é planejado, tem seu tracker persistido e é capturado de forma independente.
 
 Depois das 19h de São Paulo, captura o próprio dia útil; antes disso, captura
 o dia útil anterior. Isso evita perder o contrato antigo no dia seguinte a
@@ -101,8 +116,16 @@ ser tratado como série completa. Até existir uma fonte melhor:
 ## Automação aprovada
 
 A tarefa do Windows executa `scripts/run_b3_contract_capture_scheduled.ps1`
-às 19h15, de segunda a sexta. A GUI inicia sozinha, exibe o progresso, toca o
-aviso final e fecha trinta segundos depois do sucesso. A tarefa não inicia o
+às 19h05, de segunda a sexta — sempre depois das 19h00, hora em que a sessão
+do dia já pode ser tratada como encerrada (ver seção anterior). A GUI inicia
+sozinha, exibe o progresso, toca o aviso final e fecha trinta segundos
+depois de um sucesso real, sem issues. Em caso de falha ou de issue crítica
+(ex.: `missing_before_expiration`, instrumento sem candidato atual, seleção
+recusada pela corretora), o processo termina com exit code diferente de
+zero e a janela permanece aberta por 2 minutos para inspeção — o mesmo
+prazo usado para uma falha com exceção. O lançador
+`.ps1` espera de verdade o processo da GUI (`Start-Process -Wait -PassThru`)
+e repassa esse exit code ao Agendador do Windows. A tarefa não inicia o
 Strategy Tester nem qualquer IA.
 
 ## Limites
