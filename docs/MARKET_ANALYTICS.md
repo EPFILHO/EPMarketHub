@@ -130,3 +130,91 @@ contrato B3 atual. `market_analytics/daily_capture.py` decide apenas a sessão
 fechada. O controlador local `tools/b3_contract_capture_gui.py` usa esses
 contratos e a fundação de backfill existente; nenhuma IA participa da
 transferência dos ticks.
+
+## MVP quantitativo WIN: ticks brutos → barras, features e relatório (DEV-006)
+
+`market_analytics/quant_mvp.py` transforma as sessões já coletadas de
+`raw/clear/win/year=*/month=*/session_date=*/ticks.parquet` num conjunto
+analítico multi-timeframe. É um processamento local, determinístico e
+somente leitura sobre os Parquets brutos — nenhum MT5, terminal ao vivo ou
+IA participa. Comando único e reproduzível:
+
+```powershell
+python tools/run_quant_mvp.py `
+  --input-root D:\EPData\MarketHub\raw\clear\win `
+  --output-root D:\EPData\MarketHub\analytics\win_mvp
+```
+
+Escopo travado: só `source_id=clear`, `logical_id=win`,
+`resolved_symbol=WIN$`; qualquer outro metadado embutido, `session_date`
+divergente da partição, schema/versão não suportados ou timestamps fora de
+ordem fazem a sessão ser **rejeitada e registrada em `alerts`**, sem abortar
+o lote inteiro. Cada sessão é lida por row group/batch (nunca todos os
+ticks nem todas as sessões em memória de uma vez).
+
+Política de tick B3 desta fonte:
+
+- preço operacional = `last`, aceitando somente valores finitos e `> 0`;
+  não depende de um bit isolado de `flags` (valores compostos 1080/1336 são
+  aceitos quando `last`/`volume_real` são válidos);
+- volume = soma de `volume_real` finito e não negativo das ticks válidas;
+  um `volume_real` inválido contribui como `0`, sem invalidar a tick;
+- remove somente duplicatas exatas adjacentes (todos os campos brutos
+  iguais ao registro imediatamente anterior), inclusive na fronteira entre
+  batches; empates de `time_msc` com conteúdo diferente são válidos;
+- nunca preenche minutos sem negócio nem cria candles sintéticos.
+
+M1 é construído diretamente dos ticks (barras ancoradas no relógio UTC,
+com a `session_date` de origem anotada à parte, já que `Bar` não carrega
+esse campo); M5/M15/M30/H1 são sempre derivados do M1 — nunca de outro
+timeframe derivado. O cálculo de features reaproveita integralmente
+`Bar`/`FeatureConfig`/`compute_feature_rows`, concatenando as barras de
+todas as sessões processadas em ordem cronológica por timeframe (mesma
+regra de warm-up e ausência de vazamento documentada acima).
+
+Artefatos gerados sob a pasta de saída: `bars_features_{M1,M5,M15,M30,H1}.parquet`
+(com `timestamp_utc` como coluna Arrow `timestamp(us, tz=UTC)`
+timezone-aware — não uma string ISO — para que o consumidor não precise
+reanalisar texto para obter um tipo de tempo nativo comparável/ordenável),
+`session_summary.csv` (uma linha por sessão: OHLC, retorno, amplitude,
+contagens de ticks lidos/válidos/duplicados, volume, primeira/última
+observação e barras por timeframe — `first_observation_utc`/
+`last_observation_utc` são os timestamps exatos do primeiro/último tick
+válido, com segundo/milissegundo preservados, nunca o início do minuto da
+barra M1 correspondente), `feature_summary.csv` (contagem, ausentes e
+percentis p10/p25/p50/p75/p90 por timeframe/feature) e `run_summary.json`
+(config de features, política de preço/volume, contagens, alertas,
+hashes/contagens de cada Parquet de origem — via
+`market_analytics.backfill_writer.inspect_final_file`, sem duplicar a
+leitura segura já validada no Portão A — e hashes dos próprios artefatos).
+
+Antes de tocar o disco, `run_quant_mvp` normaliza (`Path.resolve`) e valida
+`input_root`/`output_root`/`batch_size`: recusa `batch_size <= 0`, uma
+saída igual/sobreposta à entrada em qualquer direção (saída dentro da
+entrada, entrada dentro da saída ou os dois iguais) e uma saída igual à
+raiz de um volume — nenhum `mkdir` nem leitura acontece antes dessa
+checagem.
+
+A escrita é sempre para um diretório temporário da própria execução,
+promovido para a pasta de saída somente depois que todos os artefatos
+foram gravados com sucesso, através de uma promoção **transacional e
+recuperável** (`_promote_output`), não de uma substituição atômica de
+diretório de ponta a ponta — o Windows/NTFS não oferece essa operação para
+diretórios via biblioteca padrão. Em vez disso: (1) se já existir uma
+saída anterior, ela é renomeada (atômico) para um backup único ao lado;
+(2) o diretório temporário é renomeado (atômico) para a pasta de saída;
+(3) se o passo 2 falhar, o backup do passo 1 é restaurado integralmente
+antes de propagar o erro — a saída anterior nunca é perdida nem fica
+ausente; (4) o backup só é removido depois que o passo 2 tiver sucesso.
+Existe uma janela real entre os passos 1 e 2 em que nada existe sob o nome
+final — a garantia é de recuperabilidade determinística, não de
+atomicidade de diretório. Uma falha em qualquer etapa anterior à promoção
+remove o temporário e nunca toca uma saída existente. Os Parquets brutos
+de `input_root` nunca são escritos.
+
+Duas execuções sobre a mesma entrada produzem os mesmos artefatos
+analíticos (parquets/CSVs byte-idênticos); só `generated_at_utc` e
+`duration_seconds` do `run_summary.json` variam entre execuções. Os
+percentis desta amostra são apenas descritivos — fora de escopo nesta
+fatia: classificação de regime, machine learning, backtest ou qualquer
+integração com o EPFusion (ver `docs/work_orders/DEV-006.md`).
