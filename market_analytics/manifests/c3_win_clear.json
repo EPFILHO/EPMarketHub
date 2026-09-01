@@ -1,0 +1,33 @@
+{
+  "schema": "ep_market_hub.backfill_manifest",
+  "schema_version": 1,
+  "manifest_id": "c3-win-clear",
+  "display_name": "C3-WIN — Clear — WIN$ contínuo (liquidez/proporcional)",
+  "work_order": "DEV-003/C3-WIN",
+  "source_id": "clear",
+  "session_timezone": "America/Sao_Paulo",
+  "session_close_local_time": "19:00",
+  "assets": [
+    {
+      "logical_id": "win",
+      "requested_symbol": "WIN$",
+      "provenance": {
+        "series_kind": "continuous",
+        "instrument": "win",
+        "source_symbol": "WIN$",
+        "roll_rule": "liquidity",
+        "adjustment_method": "proportional",
+        "analytics_roles": "regime,relative_returns,cross_asset"
+      }
+    }
+  ],
+  "start_date": "2025-07-14",
+  "end_date_policy": "latest_closed",
+  "execution_order": "newest_first",
+  "chunk_seconds": 900,
+  "max_attempts": 3,
+  "concurrency": 1,
+  "max_total_bytes": 53687091200,
+  "max_total_duration_seconds": 172800,
+  "authorization_state": "planning"
+}
