@@ -163,6 +163,73 @@ def test_process_session_builds_m1_and_derives_m5_with_price_volume_policy(tmp_p
         assert len(outcome.bars_by_timeframe[timeframe]) == 1
 
 
+# ---------------------------------------------------------------------------
+# Regressão (auditoria Codex do DEV-007): aggregate_bars não pode presumir
+# volume_quality="exchange" — precisa preservar a qualidade uniforme do
+# bucket ou degradar para "missing" quando houver mistura.
+# ---------------------------------------------------------------------------
+
+
+def _m1_bar(minute: int, *, volume: float | None, quality: str, price: float = 5000.0):
+    from market_analytics.bars import Bar
+
+    ts = datetime(2026, 2, 2, 13, minute, tzinfo=UTC)
+    return Bar(
+        source_id=SOURCE_ID, symbol=SYMBOL, timeframe="M1", timestamp=ts,
+        open=price, high=price + 1.0, low=price - 1.0, close=price,
+        volume=volume, volume_quality=quality,
+    )
+
+
+def test_aggregate_bars_preserves_uniform_exchange_quality_and_sums_volume() -> None:
+    bars = [_m1_bar(i, volume=10.0, quality="exchange") for i in range(5)]
+
+    m5 = quant_mvp.aggregate_bars(bars, "M5")
+
+    assert len(m5) == 1
+    assert m5[0].volume_quality == "exchange"
+    assert m5[0].volume == pytest.approx(50.0)
+
+
+def test_aggregate_bars_preserves_uniform_tick_proxy_quality_never_forces_exchange() -> None:
+    """Achado da auditoria: 5 M1 'tick_proxy' não podem virar um M5 'exchange'."""
+
+    bars = [_m1_bar(i, volume=10.0, quality="tick_proxy") for i in range(5)]
+
+    m5 = quant_mvp.aggregate_bars(bars, "M5")
+
+    assert len(m5) == 1
+    assert m5[0].volume_quality == "tick_proxy"
+    assert m5[0].volume == pytest.approx(50.0)
+
+
+def test_aggregate_bars_mixed_qualities_in_one_bucket_become_missing() -> None:
+    bars = [
+        _m1_bar(0, volume=10.0, quality="exchange"),
+        _m1_bar(1, volume=5.0, quality="tick_proxy"),
+        _m1_bar(2, volume=7.0, quality="exchange"),
+    ]
+
+    m5 = quant_mvp.aggregate_bars(bars, "M5")
+
+    assert len(m5) == 1
+    assert m5[0].volume is None
+    assert m5[0].volume_quality == "missing"
+
+
+def test_aggregate_bars_any_missing_bar_in_bucket_forces_missing() -> None:
+    bars = [
+        _m1_bar(0, volume=10.0, quality="exchange"),
+        _m1_bar(1, volume=None, quality="missing"),
+    ]
+
+    m5 = quant_mvp.aggregate_bars(bars, "M5")
+
+    assert len(m5) == 1
+    assert m5[0].volume is None
+    assert m5[0].volume_quality == "missing"
+
+
 def test_duplicate_exact_adjacent_across_batch_boundary_is_removed_once(tmp_path: Path) -> None:
     session_date = "2026-02-03"
     root = tmp_path / "raw" / "clear" / "win"

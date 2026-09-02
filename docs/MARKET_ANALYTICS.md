@@ -218,3 +218,119 @@ analíticos (parquets/CSVs byte-idênticos); só `generated_at_utc` e
 percentis desta amostra são apenas descritivos — fora de escopo nesta
 fatia: classificação de regime, machine learning, backtest ou qualquer
 integração com o EPFusion (ver `docs/work_orders/DEV-006.md`).
+
+## Histórico M1 e features para o Fusion Quant DEV-009C.1 (DEV-007)
+
+`market_analytics/win_m1_collector.py`, `win_m1_inventory.py` e
+`win_m1_features.py` produzem, offline e somente leitura, o contexto
+histórico M1/M5 do `WIN$` (Clear, terminal de pesquisa) que o Fusion Quant
+consome para explicar os 21 backtests mensais do `WIN_copy_2`. Esta entrega
+é só o **produtor**: não analisa resultado de backtest, não escolhe
+estratégia, não classifica regime — ver `docs/work_orders/DEV-007.md`.
+
+A dependência de `MetaTrader5` fica inteiramente atrás de `RatesProvider`
+(`win_m1_collector.py`), um `Protocol` estrutural; `Mt5RatesProvider` é o
+adaptador real (importa `MetaTrader5` só dentro dos próprios métodos) usado
+pela CLI, nunca pelos testes. Comando único de execução futura (não
+executado por esta entrega — nenhum terminal MT5 é aberto):
+
+```powershell
+python tools/collect_win_m1_history.py `
+  --terminal-path "C:\Users\Famil\Documents\Codex\Fusion\Fusion-Quant\runtime\mt5-clear-research\terminal64.exe" `
+  --inventory-path "C:\...\runtime\win_copy2_monthly_retro\inventory_m1.json" `
+  --inventory-sha256 59589F49F519742FCA11F4FF7F71566B6400EFDFD9745D8758918F718A203B5C `
+  --output-root D:\EPData\MarketHub\analytics\win_m1_history
+```
+
+Janela congelada: `2026-01-01 00:00:00` até `2026-08-01 00:00:00` (UTC,
+semiaberta), solicitada e validada **mês a mês** por
+`fetch_and_validate_month`. O `date_to` enviado ao provider é sempre
+**inclusivo** — `23:59:59` do último dia do mês (`month_windows` calcula
+`fim_exclusivo - 1s`), nunca `00:00:00` do mês seguinte, porque
+`copy_rates_range` do MT5 trata `date_to` como inclusivo (o inventário do
+Fusion Quant foi gerado com esse mesmo fim por mês). A validação semântica
+de cada barra devolvida continua semiaberta (`[início, fim_exclusivo)`).
+Cada mês é recusado (tudo-ou-nada, sem reconciliação parcial) por: retorno
+vazio inesperado, linha malformada ou OHLC não finito, timestamp
+duplicado/não crescente após ordenar, timestamp fora do mês, ou barra OHLC
+inconsistente (`Bar.__post_init__`).
+
+**Fingerprint — algoritmo exato do Fusion Quant.** `win_m1_inventory.py`
+monta, para cada barra, uma linha canônica `"|"`-separada — `time`
+(`str(int(...))`), `open`/`high`/`low`/`close` (`format(float(...), ".10f")`)
+e `tick_volume`/`spread`/`real_volume` (`str(int(...))`) — seguida de um
+byte `\n`; o SHA-256 de toda a sequência do mês, em **hexadecimal
+maiúsculo**, é o fingerprint. `WinCopy2Inventory`/`load_inventory_file`
+conferem primeiro o SHA-256 do arquivo de inventário inteiro (argumento
+explícito, nunca hardcoded) antes de qualquer parse, e a comparação por mês
+(`collect_validated_history`) sempre usa o fingerprint **integral** — nunca
+o prefixo de 16 caracteres, que é só evidência humana.
+
+**Schema do inventário — estrito, sem tolerância especulativa.** O parser
+exige exatamente `schema="fusion-quant-mt5-history-inventory-v1"`,
+`symbol="WIN$"`, `timeframe="M1"`, `start_month="2026-01"`,
+`end_month="2026-07"` e `months` como lista, com um registro por mês
+(`requested_month`/`bars`/`bars_fingerprint`/`status`/
+`outside_range_count`/`stable`) para exatamente jan..jul/2026, uma vez
+cada — nem a mais, nem a menos. Cada registro exige `stable is True` e
+`outside_range_count == 0`; campo desconhecido, ausente ou valor fora do
+esperado é sempre recusado. `preflight` também confere que o `symbol`
+efetivamente solicitado bate com o do inventário carregado, antes de tocar
+MT5.
+
+**Preflight antes de qualquer MT5.** `win_m1_features.preflight` (protocolo
+congelado quando aplicável, destino, hash/schema do inventário, identidade
+do símbolo) roda inteiramente antes de `Mt5RatesProvider` ser construído —
+a CLI chama `preflight(..., require_frozen_protocol=True)` e só então entra
+no `with Mt5RatesProvider(...)`. Na CLI real, o destino também precisa estar
+dentro de `D:\EPData\MarketHub` (`assert_output_within_allowed_root`).
+`Mt5RatesProvider.__enter__` confirma, nesta ordem, `initialize()`,
+`terminal_info().connected` e `symbol_select(symbol, True)`, desligando o
+terminal e recusando claramente antes de qualquer consulta de barras se
+qualquer uma falhar.
+
+**Promoção atômica e qualidade de volume.** As barras M1 validadas são
+persistidas particionadas por ano/mês
+(`m1/year=YYYY/month=MM/bars_m1.parquet`, preservando `tick_volume`,
+`spread` e `real_volume` como campos factuais, além de `volume`/
+`volume_quality` já decididos, com metadados determinísticos — sem nenhum
+campo de horário de execução). A política de volume decide por barra:
+`real_volume` vira `"exchange"` quando inteiro não negativo; caso contrário
+cai para `"tick_proxy"` usando `tick_volume`. `aggregate_bars`
+(`market_analytics/quant_mvp.py`, reaproveitado tanto pelo DEV-006 quanto
+pelo DEV-007) preserva essa qualidade no agregado M5 somente quando todas as
+M1 do bucket compartilham a mesma qualidade; qualquer mistura (ou uma barra
+`"missing"`) produz `volume=None`/`volume_quality="missing"` em vez de somar
+grandezas incompatíveis — nunca força `"exchange"` como a versão anterior
+fazia. Toda a escrita usa a mesma técnica de promoção transacional
+recuperável do DEV-006 (`win_m1_features._promote_output`): diretório
+temporário próprio, promovido só após todos os artefatos serem gravados com
+sucesso, com backup intermediário que restaura a saída anterior se a
+segunda troca falhar.
+
+**Warm-up contínuo e `available_at_utc` sem look-ahead.** Os sete meses
+validados são concatenados numa única série M1 cronológica antes de agregar
+para M5 (`market_analytics.quant_mvp.aggregate_bars`, reaproveitado sem
+reimplementação) e calcular features
+(`market_analytics.pipeline.compute_feature_rows`, também reaproveitado): o
+warm-up nunca reinicia no primeiro dia de um mês. `timestamp` de cada barra
+M5 continua sendo a abertura do bucket; `available_at_utc` (persistido só
+no artefato de features, não em `Bar`) é a abertura mais a duração do
+timeframe — o encerramento do bucket. Uma barra M5 aberta às 09:05 só fica
+disponível às 09:10; um consumidor decidindo às 09:06 só pode usar a M5
+aberta às 09:00 (disponível às 09:05).
+
+Artefatos gerados sob a pasta de saída: `m1/year=*/month=*/bars_m1.parquet`,
+`bars_features_M5.parquet` (com `available_at_utc` ao lado de
+`timestamp_utc`, ambos `timestamp(us, tz=UTC)` nativos do Arrow, e metadados
+de proveniência — schema/versão/produtor, fonte, `FeatureConfig` como JSON,
+políticas de volume/disponibilidade — também determinísticos),
+`coverage_months.csv` (contagem/fingerprint obtidos vs. esperados por mês),
+`feature_summary.csv` (mesma forma do DEV-006, só para M5) e
+`run_summary.json` (hashes/fingerprints por mês, hash do inventário,
+`FeatureConfig` completa, políticas de preço/volume/disponibilidade,
+hashes dos próprios artefatos). Determinístico salvo `generated_at_utc`/
+`duration_seconds`/`output_root` — nenhum desses três campos voláteis é
+embutido nos Parquets em si, só em `run_summary.json` (auditoria Codex:
+`generated_at_utc` por mês nos metadados do Parquet M1 quebrava a
+byte-identidade entre execuções; removido).

@@ -277,6 +277,16 @@ def aggregate_bars(bars: Sequence[Bar], timeframe: str) -> list[Bar]:
     bucket vazio, nunca olha para fora de `bars`. `bars` deve já estar
     ordenada por `timestamp` (uma única sessão ou a concatenação
     cronológica de várias).
+
+    A qualidade de volume do bucket agregado nunca é presumida: se todas as
+    barras M1 do bucket compartilham a mesma `volume_quality` (`"exchange"`
+    ou `"tick_proxy"`), o volume é somado e essa qualidade é preservada. Se o
+    bucket mistura qualidades diferentes ou contém qualquer barra
+    `"missing"`, somar os volumes seria combinar grandezas incompatíveis
+    (ex.: contagem de ticks com volume real) — o agregado sai com
+    `volume=None`/`volume_quality="missing"`, nunca com uma soma inventada
+    (auditoria Codex do DEV-007: a versão anterior sempre gravava
+    `"exchange"`, mesmo agregando barras `"tick_proxy"`).
     """
 
     if timeframe not in _TIMEFRAME_MINUTES:
@@ -289,6 +299,7 @@ def aggregate_bars(bars: Sequence[Bar], timeframe: str) -> list[Bar]:
     bucket_start: datetime | None = None
     open_ = high = low = close = 0.0
     volume = 0.0
+    qualities: set[str] = set()
 
     def bucket_of(ts: datetime) -> datetime:
         total_minutes = ts.hour * 60 + ts.minute
@@ -296,6 +307,12 @@ def aggregate_bars(bars: Sequence[Bar], timeframe: str) -> list[Bar]:
         return ts.replace(hour=floored // 60, minute=floored % 60, second=0, microsecond=0)
 
     def flush(source_id: str, symbol: str) -> None:
+        if len(qualities) == 1 and "missing" not in qualities:
+            bucket_volume: float | None = volume
+            bucket_quality = next(iter(qualities))
+        else:
+            bucket_volume = None
+            bucket_quality = "missing"
         result.append(
             Bar(
                 source_id=source_id,
@@ -306,8 +323,8 @@ def aggregate_bars(bars: Sequence[Bar], timeframe: str) -> list[Bar]:
                 high=high,
                 low=low,
                 close=close,
-                volume=volume,
-                volume_quality="exchange",
+                volume=bucket_volume,
+                volume_quality=bucket_quality,
             )
         )
 
@@ -316,15 +333,18 @@ def aggregate_bars(bars: Sequence[Bar], timeframe: str) -> list[Bar]:
         if bucket_start is None:
             bucket_start, open_, high, low = bucket, bar.open, bar.high, bar.low
             volume = 0.0
+            qualities = set()
         elif bucket != bucket_start:
             flush(bar.source_id, bar.symbol)
             bucket_start, open_, high, low = bucket, bar.open, bar.high, bar.low
             volume = 0.0
+            qualities = set()
         else:
             high = max(high, bar.high)
             low = min(low, bar.low)
         close = bar.close
         volume += bar.volume or 0.0
+        qualities.add(bar.volume_quality)
 
     if bucket_start is not None:
         flush(bars[-1].source_id, bars[-1].symbol)
