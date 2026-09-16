@@ -1,0 +1,26 @@
+{
+  "schema": "ep_market_hub.atlas.materialization_manifest.v1",
+  "manifest_id": "example",
+  "output_root": "<fora-do-repositorio>",
+  "datasets": [
+    {
+      "logical_id": "example_continuous",
+      "symbol": "EXAMPLE$",
+      "series_kind": "continuous_proportional",
+      "source_symbol": "EXAMPLE$",
+      "adjustment_method": "proportional",
+      "expected_session_start": "09:00",
+      "expected_session_end": "18:00",
+      "input_kind": "m1_segments",
+      "segments": [
+        {
+          "segment_id": "example_2026_01",
+          "path": "<caminho-absoluto-do-parquet-mensal>",
+          "source_id": "example_source",
+          "allowed_start_date": "2026-01-01",
+          "allowed_end_date": "2026-01-31"
+        }
+      ]
+    }
+  ]
+}

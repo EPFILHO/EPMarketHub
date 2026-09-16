@@ -5,6 +5,9 @@
 > e features básicas; conexão incremental e seletor sombra são fases
 > posteriores e não fazem parte da DEV-008A.
 
+> A persistência incremental offline da DEV-008B.1A está documentada em
+> `docs/ATLAS_INCREMENTAL.md`.
+
 ## Fronteira EP Market Hub → Fusion Quant
 
 - **EP Market Hub** (este repositório) é **produtor**: observa barras
