@@ -33,7 +33,10 @@ A inspeção do primeiro M1 real revelou um deslocamento indevido de três
 horas: o produtor MT5 já fornece o relógio da fonte tipado como UTC. A
 política foi corrigida para preservar esse valor, a versão do produtor e o
 fingerprint foram alterados para invalidar automaticamente a geração
-incorreta, sem apagá-la do histórico imutável.
+incorreta, sem apagá-la do histórico imutável. A reconstrução promoveu a
+geração `20260916T192118686687_633cd170`, recalculou as 11 sessões elegíveis
+e preservou horários de fonte entre 09:02/09:03 e 18:31/19:30. A repetição
+resultou em `no_change`, sem alterar bytes ou mtime do ponteiro vigente.
 
 ## Veredito
 
