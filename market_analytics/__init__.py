@@ -8,6 +8,26 @@ biblioteca padrão.
 Fronteira arquitetural: ver `docs/MARKET_ANALYTICS.md`.
 """
 
+from .atlas_contract import (
+    HUB_ATLAS_CONTRACT_VERSION,
+    to_fusion_quant_v1,
+    to_hub_contract,
+)
+from .atlas_contract import (
+    SCHEMA_CHECKPOINT_ROWS as ATLAS_SCHEMA_CHECKPOINT_ROWS,
+)
+from .atlas_contract import (
+    SCHEMA_EVENT_ROWS as ATLAS_SCHEMA_EVENT_ROWS,
+)
+from .atlas_contract import (
+    SCHEMA_OUTSIDE_CORE_ROWS as ATLAS_SCHEMA_OUTSIDE_CORE_ROWS,
+)
+from .atlas_contract import (
+    SCHEMA_QUALITY_ISSUE_ROWS as ATLAS_SCHEMA_QUALITY_ISSUE_ROWS,
+)
+from .atlas_contract import (
+    SCHEMA_SESSION_ROWS as ATLAS_SCHEMA_SESSION_ROWS,
+)
 from .backfill_catalog import CatalogStateError, list_running_sessions, new_attempt_id, open_catalog
 from .backfill_runner import (
     BackfillSessionResult,
@@ -26,6 +46,14 @@ from .backfill_writer import (
     recompute_summary_from_file,
 )
 from .bars import Bar, VolumeQuality
+from .causal_atlas import (
+    AtlasBar,
+    AtlasManifest,
+    CausalAtlasError,
+    CausalAtlasResult,
+    build_causal_atlas,
+    wrap_bars,
+)
 from .config import FeatureConfig
 from .features import FEATURE_SCHEMA_VERSION, FeatureRow
 from .pipeline import compute_feature_rows
@@ -61,6 +89,20 @@ from .tick_diagnostics import (
 __all__ = [
     "Bar",
     "VolumeQuality",
+    "AtlasBar",
+    "AtlasManifest",
+    "CausalAtlasError",
+    "CausalAtlasResult",
+    "build_causal_atlas",
+    "wrap_bars",
+    "HUB_ATLAS_CONTRACT_VERSION",
+    "ATLAS_SCHEMA_SESSION_ROWS",
+    "ATLAS_SCHEMA_CHECKPOINT_ROWS",
+    "ATLAS_SCHEMA_EVENT_ROWS",
+    "ATLAS_SCHEMA_OUTSIDE_CORE_ROWS",
+    "ATLAS_SCHEMA_QUALITY_ISSUE_ROWS",
+    "to_fusion_quant_v1",
+    "to_hub_contract",
     "FeatureConfig",
     "FeatureRow",
     "FEATURE_SCHEMA_VERSION",

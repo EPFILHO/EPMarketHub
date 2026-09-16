@@ -1,5 +1,10 @@
 # Fundação quantitativa de regimes — fatia 1
 
+> O contrato causal promovido na DEV-008A está documentado em
+> `docs/ATLAS_CONTRACT.md`. A fundação abaixo permanece como origem das barras
+> e features básicas; conexão incremental e seletor sombra são fases
+> posteriores e não fazem parte da DEV-008A.
+
 ## Fronteira EP Market Hub → Fusion Quant
 
 - **EP Market Hub** (este repositório) é **produtor**: observa barras
