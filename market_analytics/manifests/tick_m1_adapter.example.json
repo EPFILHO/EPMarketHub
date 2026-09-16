@@ -1,0 +1,17 @@
+{
+  "schema": "ep_market_hub.atlas.tick_m1_adapter_manifest.v1",
+  "manifest_id": "example_contract",
+  "input_root": "<fora-do-repositorio>/raw/example_source/example_contract",
+  "derived_m1_root": "<fora-do-repositorio>/analytics/tick_atlas_adapter",
+  "atlas_output_root": "<fora-do-repositorio>/analytics/atlas",
+  "logical_id": "example_contract",
+  "source_id": "example_source",
+  "resolved_symbol": "EXAMPLEV26",
+  "contract_id": "EXAMPLEV26",
+  "series_kind": "individual_contract",
+  "source_symbol": "EXAMPLEV26",
+  "adjustment_method": "none",
+  "session_timezone": "America/Sao_Paulo",
+  "expected_session_start": "09:00",
+  "expected_session_end": "18:00"
+}

@@ -175,14 +175,26 @@ def _decode_metadata(schema: pa.Schema) -> dict[str, str]:
     }
 
 
-def validate_session_metadata(metadata: dict[str, str], *, path: Path, session_date: date) -> None:
-    """Valida os metadados essenciais antes de qualquer processamento.
+def validate_raw_tick_metadata(
+    metadata: dict[str, str],
+    *,
+    path: Path,
+    session_date: date,
+    expected_source_id: str,
+    expected_logical_id: str,
+    expected_resolved_symbol: str,
+) -> None:
+    """Valida os metadados essenciais do schema bruto v1 contra a identidade
+    declarada pelo chamador, antes de qualquer processamento de tick.
 
     Recusa (via `SessionRejectedError`) schema/versão/`source_id`/
     `logical_id`/`resolved_symbol` fora do esperado, ou `session_date`
     embutido divergente da partição no caminho — nunca assume silenciosamente
-    que um arquivo pertence à série WIN$/Clear só porque está no caminho
-    certo.
+    que um arquivo pertence à série declarada só porque está no caminho
+    certo. Reaproveitada por `validate_session_metadata` (identidade fixa do
+    MVP WIN, DEV-006) e por `market_analytics.tick_atlas_adapter` (identidade
+    declarada num manifesto genérico, DEV-008B.1B) — a mesma disciplina de
+    recusa nunca é duplicada entre os dois.
     """
 
     def require(key: str, expected: str | None = None) -> str:
@@ -203,9 +215,9 @@ def validate_session_metadata(metadata: dict[str, str], *, path: Path, session_d
             f"schema_version não suportada: {schema_version!r} "
             f"(suportadas: {sorted(SUPPORTED_SCHEMA_VERSIONS)})",
         )
-    require("source_id", EXPECTED_SOURCE_ID)
-    require("logical_id", EXPECTED_LOGICAL_ID)
-    require("resolved_symbol", EXPECTED_RESOLVED_SYMBOL)
+    require("source_id", expected_source_id)
+    require("logical_id", expected_logical_id)
+    require("resolved_symbol", expected_resolved_symbol)
     embedded_session_date = require("session_date")
     if embedded_session_date != session_date.isoformat():
         raise SessionRejectedError(
@@ -213,6 +225,23 @@ def validate_session_metadata(metadata: dict[str, str], *, path: Path, session_d
             "session_date do metadado divergente da partição: "
             f"metadado={embedded_session_date!r}, partição={session_date.isoformat()!r}",
         )
+
+
+def validate_session_metadata(metadata: dict[str, str], *, path: Path, session_date: date) -> None:
+    """Valida os metadados essenciais antes de qualquer processamento.
+
+    Wrapper de `validate_raw_tick_metadata` com a identidade fixa do MVP WIN
+    (escopo travado do DEV-006 — ver docstring do módulo).
+    """
+
+    validate_raw_tick_metadata(
+        metadata,
+        path=path,
+        session_date=session_date,
+        expected_source_id=EXPECTED_SOURCE_ID,
+        expected_logical_id=EXPECTED_LOGICAL_ID,
+        expected_resolved_symbol=EXPECTED_RESOLVED_SYMBOL,
+    )
 
 
 class _M1Builder:
@@ -351,23 +380,61 @@ def aggregate_bars(bars: Sequence[Bar], timeframe: str) -> list[Bar]:
     return result
 
 
-def process_session(path: Path, *, session_date: date, batch_size: int = 200_000) -> SessionOutcome:
-    """Lê uma sessão por row group/batches e produz barras M1..H1.
+@dataclass(frozen=True)
+class TickSessionM1Result:
+    """Resultado genérico de ler uma sessão de ticks e construir M1.
 
-    Nunca materializa os ticks inteiros da sessão em memória: processa cada
-    batch e descarta seu conteúdo bruto assim que consumido. Levanta
-    `SessionRejectedError` para qualquer metadado inválido, arquivo
-    corrompido ou timestamps fora de ordem — o chamador decide se isso
-    interrompe só esta sessão ou o lote inteiro.
+    Sem nenhuma identidade de fonte embutida (ao contrário de
+    `SessionOutcome`, que carrega os timeframes M5..H1 derivados e é
+    específico do MVP WIN) — usado tanto por `process_session` quanto pelo
+    adaptador de ticks contratuais (`market_analytics.tick_atlas_adapter`,
+    DEV-008B.1B).
+    """
+
+    session_date: date
+    path: Path
+    stats: SessionTickStats
+    m1_bars: list[Bar]
+    source: InspectedFile
+    first_tick_utc: datetime | None
+    last_tick_utc: datetime | None
+
+
+def read_session_ticks_to_m1(
+    path: Path,
+    *,
+    session_date: date,
+    source_id: str,
+    symbol: str,
+    validate_metadata: Callable[..., None],
+    batch_size: int = 200_000,
+) -> TickSessionM1Result:
+    """Lê uma sessão de ticks.parquet por row group/batches e constrói M1.
+
+    Núcleo único de leitura por batches, política de preço/volume e
+    deduplicação exata adjacente (ver `PRICE_POLICY`/`VOLUME_POLICY`/
+    `DEDUP_POLICY`) — reaproveitado por `process_session` (identidade fixa
+    do MVP WIN) e por `market_analytics.tick_atlas_adapter` (identidade
+    declarada num manifesto), nunca duplicado entre os dois. Nunca
+    materializa os ticks inteiros da sessão em memória: processa cada batch
+    e descarta seu conteúdo bruto assim que consumido.
+
+    `validate_metadata` é obrigatório e chamado como
+    `validate_metadata(metadata, path=path, session_date=session_date)` logo
+    após abrir o arquivo, antes de qualquer leitura de tick — deve levantar
+    `SessionRejectedError` para recusar a sessão inteira (identidade
+    divergente, schema incompatível). Levanta `SessionRejectedError` também
+    para arquivo corrompido ou timestamps fora de ordem — o chamador decide
+    se isso interrompe só esta sessão ou o lote inteiro.
     """
 
     path = Path(path)
     parquet_file, handle = _open_parquet_file(path)
     try:
         metadata = _decode_metadata(parquet_file.schema_arrow)
-        validate_session_metadata(metadata, path=path, session_date=session_date)
+        validate_metadata(metadata, path=path, session_date=session_date)
 
-        builder = _M1Builder(source_id=EXPECTED_SOURCE_ID, symbol=EXPECTED_RESOLVED_SYMBOL)
+        builder = _M1Builder(source_id=source_id, symbol=symbol)
         ticks_read = 0
         ticks_valid = 0
         ticks_duplicated = 0
@@ -439,9 +506,6 @@ def process_session(path: Path, *, session_date: date, batch_size: int = 200_000
             raise SessionRejectedError(path, f"falha ao ler ticks: {exc}") from exc
 
         m1_bars = builder.finish()
-        bars_by_timeframe = {"M1": m1_bars}
-        for timeframe in TIMEFRAMES[1:]:
-            bars_by_timeframe[timeframe] = aggregate_bars(m1_bars, timeframe)
 
         try:
             source = inspect_final_file(path)
@@ -456,11 +520,11 @@ def process_session(path: Path, *, session_date: date, batch_size: int = 200_000
             )
 
         stats = SessionTickStats(ticks_read=ticks_read, ticks_valid=ticks_valid, ticks_duplicated=ticks_duplicated)
-        return SessionOutcome(
+        return TickSessionM1Result(
             session_date=session_date,
             path=path,
             stats=stats,
-            bars_by_timeframe=bars_by_timeframe,
+            m1_bars=m1_bars,
             source=source,
             first_tick_utc=first_tick_utc,
             last_tick_utc=last_tick_utc,
@@ -474,6 +538,38 @@ def process_session(path: Path, *, session_date: date, batch_size: int = 200_000
             handle.close()
         except (pa.ArrowException, OSError):
             pass
+
+
+def process_session(path: Path, *, session_date: date, batch_size: int = 200_000) -> SessionOutcome:
+    """Lê uma sessão por row group/batches e produz barras M1..H1 do MVP WIN.
+
+    Wrapper fino de `read_session_ticks_to_m1` com a identidade fixa do MVP
+    WIN (`EXPECTED_SOURCE_ID`/`EXPECTED_RESOLVED_SYMBOL`) e a validação de
+    metadados travada (`validate_session_metadata`); deriva M5..H1 de M1 via
+    `aggregate_bars`. Preserva exatamente o comportamento anterior — este é o
+    único chamador de `read_session_ticks_to_m1` com essa identidade fixa.
+    """
+
+    result = read_session_ticks_to_m1(
+        path,
+        session_date=session_date,
+        source_id=EXPECTED_SOURCE_ID,
+        symbol=EXPECTED_RESOLVED_SYMBOL,
+        batch_size=batch_size,
+        validate_metadata=validate_session_metadata,
+    )
+    bars_by_timeframe: dict[str, list[Bar]] = {"M1": result.m1_bars}
+    for timeframe in TIMEFRAMES[1:]:
+        bars_by_timeframe[timeframe] = aggregate_bars(result.m1_bars, timeframe)
+    return SessionOutcome(
+        session_date=result.session_date,
+        path=result.path,
+        stats=result.stats,
+        bars_by_timeframe=bars_by_timeframe,
+        source=result.source,
+        first_tick_utc=result.first_tick_utc,
+        last_tick_utc=result.last_tick_utc,
+    )
 
 
 def _percentile(sorted_values: list[float], p: float) -> float:
