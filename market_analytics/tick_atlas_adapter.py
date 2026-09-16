@@ -53,7 +53,8 @@ CURRENT_SCHEMA = "ep_market_hub.atlas.tick_m1_adapter_current.v1"
 RUN_REPORT_SCHEMA = "ep_market_hub.atlas.tick_m1_adapter_report.v1"
 M1_SEGMENT_SCHEMA = "ep_market_hub.atlas.tick_m1_segment.v1"
 M1_SEGMENT_SCHEMA_VERSION = 1
-PRODUCER_VERSION = "dev-008b1b-tick-atlas-adapter-1"
+PRODUCER_VERSION = "dev-008b1b-tick-atlas-adapter-2"
+TIMESTAMP_POLICY = "source_wall_clock_no_conversion"
 
 # DEV-008B.1B trabalha somente com contratos individuais, sem ajuste — uma
 # série contínua/ajustada pertence a outro produtor (DEV-008B.1A). Estes
@@ -246,6 +247,11 @@ class TickAdapterManifest:
 
     def fingerprint(self) -> str:
         payload = {
+            # A semântica do produtor faz parte da identidade da derivação.
+            # Assim, uma correção algorítmica invalida automaticamente a
+            # geração vigente mesmo quando o manifesto do operador não muda.
+            "producer_version": PRODUCER_VERSION,
+            "timestamp_policy": TIMESTAMP_POLICY,
             "schema": self.schema,
             "manifest_id": self.manifest_id,
             "input_root": str(Path(self.input_root).expanduser().resolve(strict=False)),
@@ -551,30 +557,26 @@ def _write_session_m1_parquet(
         "adjustment_method": manifest.adjustment_method,
         "session_date": session_date.isoformat(),
         "session_timezone": manifest.session_timezone,
-        "timestamp_policy": "session_wall_clock_relabelled_utc",
+        "timestamp_policy": TIMESTAMP_POLICY,
         "source_ticks_path": str(source.path),
         "source_ticks_sha256": source.sha256,
         "source_ticks_size_bytes": str(source.size_bytes),
         "source_ticks_row_count": str(source.row_count),
     }
     encoded_metadata = {key.encode("utf-8"): value.encode("utf-8") for key, value in metadata.items()}
-    session_zone = ZoneInfo(manifest.session_timezone)
-    wall_clock_timestamps = [
-        bar.timestamp.astimezone(session_zone).replace(tzinfo=UTC) for bar in bars
-    ]
-    if any(timestamp.date() != session_date for timestamp in wall_clock_timestamps):
+    source_timestamps = [bar.timestamp for bar in bars]
+    if any(timestamp.date() != session_date for timestamp in source_timestamps):
         raise TickAdapterError(
-            f"sessão {session_date.isoformat()} contém barra fora da data local declarada"
+            f"sessão {session_date.isoformat()} contém barra fora da data da fonte declarada"
         )
     columns: dict[str, Any] = {
         "source_id": [bar.source_id for bar in bars],
         "symbol": [bar.symbol for bar in bars],
         "timeframe": [bar.timeframe for bar in bars],
-        # O Atlas trabalha com o relógio de sessão sem conversão. Ticks
-        # brutos carregam instante UTC real; convertemos para o relógio da
-        # sessão e recolocamos UTC apenas como marcador tipado, exatamente
-        # como a série contínua vinda do MT5.
-        "timestamp_utc": pa.array(wall_clock_timestamps, type=pa.timestamp("us", tz="UTC")),
+        # O produtor MT5 deste projeto entrega o relógio da própria fonte
+        # tipado como UTC. Preservamos esses valores sem nova conversão para
+        # manter a mesma convenção das séries M1 históricas do Atlas.
+        "timestamp_utc": pa.array(source_timestamps, type=pa.timestamp("us", tz="UTC")),
         "open": [bar.open for bar in bars],
         "high": [bar.high for bar in bars],
         "low": [bar.low for bar in bars],
@@ -635,7 +637,7 @@ def _validate_existing_m1(
         "adjustment_method": manifest.adjustment_method,
         "session_date": session_date,
         "session_timezone": manifest.session_timezone,
-        "timestamp_policy": "session_wall_clock_relabelled_utc",
+        "timestamp_policy": TIMESTAMP_POLICY,
         "source_ticks_sha256": expected_tick_sha256,
     }
     divergent = {

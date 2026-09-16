@@ -243,12 +243,13 @@ def test_first_execution_materializes_all_eligible_sessions(tmp_path: Path) -> N
         assert _published_m1_path(tmp_path, session_date).is_file()
     first_m1 = _published_m1_path(tmp_path, "2026-09-01")
     first_table = pq.read_table(first_m1, columns=["timestamp_utc"])
-    assert first_table.column("timestamp_utc")[0].as_py().hour == 10  # 13:00 UTC -> 10:00 São Paulo
+    # O relógio fornecido pelo produtor MT5 é preservado sem conversão.
+    assert first_table.column("timestamp_utc")[0].as_py().hour == 13
     metadata = {
         key.decode(): value.decode()
         for key, value in (pq.ParquetFile(first_m1).schema_arrow.metadata or {}).items()
     }
-    assert metadata["timestamp_policy"] == "session_wall_clock_relabelled_utc"
+    assert metadata["timestamp_policy"] == "source_wall_clock_no_conversion"
     assert (_current_generation_root(tmp_path) / "state.json").is_file()
     atlas_manifest_path = Path(report["atlas_manifest_path"])
     assert atlas_manifest_path.is_file()

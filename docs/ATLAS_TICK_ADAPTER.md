@@ -25,8 +25,8 @@ portão operacional.
 - identidade bruta validada contra manifesto estrito;
 - somente sessões anteriores à data da execução;
 - um objeto M1 imutável e endereçado por SHA-256;
-- timestamps convertidos do UTC real para o relógio da sessão e novamente
-  tipados como UTC, conforme a política `source_wall_clock_no_conversion` do
+- relógio entregue pelo produtor MT5 preservado sem conversão adicional e
+  tipado como UTC, conforme a política `source_wall_clock_no_conversion` do
   Atlas;
 - geração contendo `state.json` e manifesto Atlas promovida por um único
   `current.json` atômico;
